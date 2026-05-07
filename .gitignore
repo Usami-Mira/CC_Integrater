@@ -1,0 +1,25 @@
+.venv/
+.env
+data/raw/
+data/processed/
+logs/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+
+# Claude Code / AI assistant artifacts
+.claude/
+.claude-*/
+CLAUDE.md
+.aider*
+.cursor/
+.cursorrules
+.continue/
+.windsurfrules
+.codeium/
+.github/copilot-instructions.md

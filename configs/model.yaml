@@ -1,0 +1,9 @@
+provider: dashscope
+base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+model_id: qwen-plus
+timeout_s: 60
+temperatures:
+  planner: 0.9
+  builder: 0.2
+  builder_retry: 0.4
+  evaluator: 0.0
