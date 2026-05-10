@@ -1,5 +1,9 @@
+# ============ 复制进 web 端时省略这些导入 ============
 from magnus import submit_job, JobType, FileSecret
 from typing import Annotated, Literal, Optional, List
+# =====================================================
+
+
 def safe_quote(s: str) -> str:
     return "'" + str(s).replace("'", r"'\''") + "'"
 
@@ -11,12 +15,6 @@ def safe_quote(s: str) -> str:
 ParquetData = Annotated[FileSecret, {
     "label": "Parquet 数据集",
     "description": "微积分题目数据文件，需包含 question / answer 列。用 magnus send 上传后填入 magnus-secret:...",
-    "placeholder": "magnus-secret:xxxx-xxxx-xxxx-xxxx",
-}]
-
-DashscopeKey = Annotated[FileSecret, {
-    "label": "DashScope API Key",
-    "description": "通过 magnus send 上传密钥，填入返回的 magnus-secret:...",
     "placeholder": "magnus-secret:xxxx-xxxx-xxxx-xxxx",
 }]
 
@@ -84,7 +82,6 @@ Priority = Annotated[Literal["A1", "A2", "B1", "B2"], {
 
 def blueprint(
     parquet_data: ParquetData,
-    dashscope_key: DashscopeKey,
     k: K = 3,
     max_rows: MaxRows = 0,
     max_outer_loops: MaxOuterLoops = 2,
@@ -95,7 +92,7 @@ def blueprint(
 ):
     """批量求解微积分题：scripts/run_batch.py 的 wrapper.
 
-    任何参数变体都通过这里走，不再建临时蓝图。
+    使用 vLLM 本地运行 Qwen3.6-27B-FP8，无需 API Key。
     smoke 场景设 max_rows=20 即可快速验证。
     """
     solver_args = [
@@ -126,19 +123,18 @@ def blueprint(
     description = f"""\
 ## Calc Solver 批量求解
 
+- 模型: Qwen3.6-27B-FP8 (vLLM 本地)
 - 策略数: {k}, 重试轮数: {max_outer_loops}
 - 截断: {max_rows if max_rows > 0 else '全量'}
 - LLM 并发: {max_concurrent_llm}, Builder 步数: {max_llm_steps}
 - 题目并行: {problem_concurrency}
 """
 
-    # entry_command 直接在仓库根目录执行（Magnus 已自动 cd 到 repo）
     entry_command = f"""\
+export MODELSCOPE_CACHE=/data/.cache/modelscope && \\
 python -c "from magnus import download_file; download_file({safe_quote(parquet_data)}, '/tmp/input.parquet')" && \\
-python -c "from magnus import download_file; download_file({safe_quote(dashscope_key)}, '/tmp/.dashscope_key')" && \\
-export DASHSCOPE_API_KEY=$(cat /tmp/.dashscope_key) && \\
 {env_setup} python scripts/run_batch.py {solver_cmd} && \\
-rm -f /tmp/input.parquet /tmp/.dashscope_key\
+rm -f /tmp/input.parquet\
 """
 
     submit_job(
@@ -152,4 +148,9 @@ rm -f /tmp/input.parquet /tmp/.dashscope_key\
         memory_demand="32G",
         job_type=getattr(JobType, priority),
         container_image="docker://ghcr.io/xwdun/cc_integrater:latest",
+        gpu_type="a100",
+        gpu_count=1,
+        system_entry_command="""\
+export APPTAINER_BIND="/data:/data"
+""",
     )
