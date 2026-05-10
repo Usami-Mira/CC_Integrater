@@ -1,35 +1,23 @@
-# ============ 复制进 web 端时省略这些导入 ============
 from magnus import submit_job, JobType, FileSecret
 from typing import Annotated, Literal, Optional, List
-# =====================================================
-
-
 def safe_quote(s: str) -> str:
-    return f"'{str(s).replace(chr(39), chr(39) + chr(92) + chr(39) + chr(39))}'"
+    return "'" + str(s).replace("'", r"'\''") + "'"
 
 
 # ── Calc Solver v2: 批量求解任务蓝图 ──────────────────────────────────────────
 # 用 scripts/run_batch.py 跑 Planner → Builder → Evaluator 流水线。
 # CPU + LLM API 调用型，不需要 GPU。
 
-ParquetPath = Annotated[str, {
-    "label": "Parquet 数据集路径",
-    "description": "微积分题目数据文件，需包含 question / answer 列",
-    "allow_empty": False,
-    "placeholder": "/data/dingchenyi/CC_Integrater/data/raw/synth-v1.parquet",
+ParquetData = Annotated[FileSecret, {
+    "label": "Parquet 数据集",
+    "description": "微积分题目数据文件，需包含 question / answer 列。用 magnus send 上传后填入 magnus-secret:...",
+    "placeholder": "magnus-secret:xxxx-xxxx-xxxx-xxxx",
 }]
 
 DashscopeKey = Annotated[FileSecret, {
     "label": "DashScope API Key",
     "description": "通过 magnus send 上传密钥，填入返回的 magnus-secret:...",
     "placeholder": "magnus-secret:xxxx-xxxx-xxxx-xxxx",
-}]
-
-Runner = Annotated[str, {
-    "label": "执行用户",
-    "description": "集群上的用户名，用于容器权限匹配",
-    "allow_empty": False,
-    "placeholder": "your username on the cluster",
 }]
 
 # ── 核心参数 ────────────────────────────────────────────────────────────────
@@ -45,6 +33,7 @@ MaxRows = Annotated[int, {
     "label": "题目截断数",
     "description": "0 = 全量；用于 smoke 烟测建议填 10-50",
     "min": 0,
+    "max": 999,
     "scope": "核心参数",
 }]
 
@@ -94,9 +83,8 @@ Priority = Annotated[Literal["A1", "A2", "B1", "B2"], {
 
 
 def blueprint(
-    parquet_path: ParquetPath,
+    parquet_data: ParquetData,
     dashscope_key: DashscopeKey,
-    runner: Runner,
     k: K = 3,
     max_rows: MaxRows = 0,
     max_outer_loops: MaxOuterLoops = 2,
@@ -111,7 +99,7 @@ def blueprint(
     smoke 场景设 max_rows=20 即可快速验证。
     """
     solver_args = [
-        f"--parquet {safe_quote(parquet_path)}",
+        "--parquet /tmp/input.parquet",
         f"--K {k}",
     ]
     if max_rows > 0:
@@ -138,39 +126,30 @@ def blueprint(
     description = f"""\
 ## Calc Solver 批量求解
 
-- 数据: {parquet_path}
 - 策略数: {k}, 重试轮数: {max_outer_loops}
 - 截断: {max_rows if max_rows > 0 else '全量'}
 - LLM 并发: {max_concurrent_llm}, Builder 步数: {max_llm_steps}
 - 题目并行: {problem_concurrency}
 """
 
-    # FileSecret 需要先下载到容器内，再导出为 DASHSCOPE_API_KEY 环境变量
-    # 项目代码通过 os.environ["DASHSCOPE_API_KEY"] 或 .env 文件读取
+    # entry_command 直接在仓库根目录执行（Magnus 已自动 cd 到 repo）
     entry_command = f"""\
-cd /data/dingchenyi/CC_Integrater && \\
+python -c "from magnus import download_file; download_file({safe_quote(parquet_data)}, '/tmp/input.parquet')" && \\
 python -c "from magnus import download_file; download_file({safe_quote(dashscope_key)}, '/tmp/.dashscope_key')" && \\
-DASHSCOPE_API_KEY=$(cat /tmp/.dashscope_key) {env_setup} python scripts/run_batch.py {solver_cmd} && \\
-rm -f /tmp/.dashscope_key\
+export DASHSCOPE_API_KEY=$(cat /tmp/.dashscope_key) && \\
+{env_setup} python scripts/run_batch.py {solver_cmd} && \\
+rm -f /tmp/input.parquet /tmp/.dashscope_key\
 """
 
     submit_job(
         task_name=f"calc-solver-{label}",
         entry_command=entry_command,
         repo_name="CC_Integrater",
-        namespace="Rise-AGI",
+        namespace="Usami-Mira",
+        branch="planner",
         description=description,
-        runner=runner,
         cpu_count=8,
         memory_demand="32G",
         job_type=getattr(JobType, priority),
-        system_entry_command="""\
-mounts=(
-  "/data:/data"
-  "/opt/miniconda3:/opt/miniconda3"
-)
-export APPTAINER_BIND=$(IFS=,; echo "${mounts[*]}")
-export MAGNUS_HOME=/magnus
-unset VIRTUAL_ENV SSL_CERT_FILE\
-""",
+        container_image="docker://ghcr.io/xwdun/cc_integrater:latest",
     )

@@ -10,7 +10,7 @@
   max_retries_per_strategy: 2
 
 rate_limits:
-  max_concurrent_llm_calls: 64
+  max_concurrent_llm_calls: 32
   qps: 32
 
 data:
