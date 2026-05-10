@@ -39,7 +39,7 @@ class BuilderAgent(BaseAgent):
                 prior_error=last_error,
             )
             if result is not None:
-                passed, check_reason = self_check_answer(result, problem)
+                passed, check_reason = await self_check_answer(result, problem)
                 if passed:
                     return Solution(
                         strategy_id=strategy.strategy_id,

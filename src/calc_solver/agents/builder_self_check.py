@@ -5,7 +5,7 @@ import sympy as sp
 from calc_solver.schema import SolvingProblem
 
 
-def self_check_answer(result: dict, problem: SolvingProblem) -> tuple[bool, str]:
+async def self_check_answer(result: dict, problem: SolvingProblem) -> tuple[bool, str]:
     """Reverse-verify the final answer using SymPy with robust equivalence checking."""
     from calc_solver.tools.latex_parser import best_parse
     from calc_solver.tools.sympy_tool import differentiate
@@ -31,7 +31,7 @@ def self_check_answer(result: dict, problem: SolvingProblem) -> tuple[bool, str]
 
             # Method 1: Use Verifier with full pipeline (L1-L5)
             v = Verifier(llm_client=None, llm_for_unsure=False)
-            vr = v.is_equivalent(d_res["result"], integrand, var=var)
+            vr = await v.is_equivalent(d_res["result"], integrand, var=var)
             if vr.is_eq:
                 return True, ""
 

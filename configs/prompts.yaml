@@ -72,7 +72,7 @@ builder:
       3. 若连续两次失败，放弃该策略，使用其他策略或输出错误。
 
     **输出格式（严格扁平 JSON，请直接输出纯 JSON 文本）**：
-    - 工具调用步：{"action": "tool", "thought": "...", "tool": "工具名", "args": {参数对象}}
+    - 工具调用步：{"action": "tool", "thought": "...", "tool": "工具名", "args": {{参数对象}}}
     - 思考步：{"action": "think", "thought": "..."}
     - 结束步：{"action": "finish", "thought": "...", "final_answer": "LaTeX 格式", "final_answer_sympy": "SymPy 可解析表达式（使用 log 表示自然对数，而非 ln）"}
 
@@ -117,7 +117,7 @@ equivalence_judge:
     - 不要因形式相似判 true；不要因未化简判 false。
     - 对于不定积分，检查 simplify(diff(P - G, var)) 是否为 0（而非 P-G 是否为常数）。
     - 定义域差异：例如一个包含 ln(x)、另一个包含 ln|x|，应判 false 并说明定义域不同。
-    - 常见恒等式：sin^2 x + cos^2 x = 1；ln(ab) = ln a + ln b（注意定义域）；e^{ln x} = x (x>0)。
+    - 常见恒等式：sin^2 x + cos^2 x = 1；ln(ab) = ln a + ln b（注意定义域）；exp(ln x) = x (x>0)。
     
     题目背景：{question}
     答案类型：{answer_type}
