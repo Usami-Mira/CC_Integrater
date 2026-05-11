@@ -9,7 +9,7 @@ if TYPE_CHECKING:
 from calc_solver.tools.verifier.base import VerifyResult
 
 
-def check_llm_arbitration(
+async def check_llm_arbitration(
     pred: str, gold: str, var: str, answer_type: str,
     question: str, pass_count: int, total_count: int,
     llm_client: "QwenClient",
@@ -33,7 +33,7 @@ def check_llm_arbitration(
             pass_rate=pass_count,
             total=total_count,
         )
-        raw = llm_client.chat(
+        raw = await llm_client.chat(
             [{"role": "system", "content": system}, {"role": "user", "content": user}],
             temperature=0.0, json_mode=True, max_retries=1, agent_name="verifier"
         )

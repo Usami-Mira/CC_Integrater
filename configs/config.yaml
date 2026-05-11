@@ -2,16 +2,16 @@
   K: 3                                  # Planner strategies per problem
   builder_max_steps: 12
   builder_max_retries: 2
-  max_outer_loops: 2                    # Builder-Evaluator retry loops (user requirement)
+  max_outer_loops: 3                    # Builder-Evaluator retry loops (user requirement)
   enable_replan_on_fail: true
   enable_early_stop: false
-  problem_concurrency: 4
-  builder_concurrency_per_problem: 3
+  problem_concurrency: 8
+  builder_concurrency_per_problem: 6
   max_retries_per_strategy: 2
 
 rate_limits:
-  max_concurrent_llm_calls: 16
-  qps: 8
+  max_concurrent_llm_calls: 32
+  qps: 32
 
 data:
   column_overrides: {}                  # e.g. {question: stem_zh, gold_answer: final_answer}

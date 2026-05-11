@@ -59,7 +59,7 @@ class Verifier:
         self.llm_for_unsure = llm_for_unsure
         self.logger = logger
 
-    def is_equivalent(
+    async def is_equivalent(
         self,
         pred: str,
         gold: str,
@@ -85,48 +85,46 @@ class Verifier:
         if pred_expr is None or gold_expr is None:
             if self.logger:
                 self.logger.info("verifier_parse_failed", pred=pred[:100], gold=gold[:100], var=var)
+            # Cannot run L2-L4, go straight to L5
             if self.llm_client and self.llm_for_unsure:
-                return check_llm_arbitration(
+                return await check_llm_arbitration(
                     pred, gold, var, answer_type, question, 0, 0,
                     self.llm_client, self.logger,
                 )
             return VerifyResult(is_eq=False, level_used="fail", confidence=0.0, evidence="parse_failed")
 
-        # L2: symbolic simplification
+        # L2: symbolic simplification — True => pass, else continue
         l2 = check_symbolic(pred_expr, gold_expr)
-        if l2 is not None:
+        if l2 is True:
             if self.logger:
-                self.logger.info("verifier_L2", is_eq=l2, pred_expr=str(pred_expr)[:80], gold_expr=str(gold_expr)[:80])
-            return VerifyResult(is_eq=l2, level_used="L2", confidence=0.95,
+                self.logger.info("verifier_L2", is_eq=True, pred_expr=str(pred_expr)[:80], gold_expr=str(gold_expr)[:80])
+            return VerifyResult(is_eq=True, level_used="L2", confidence=0.95,
                                 evidence="symbolic_simplify")
 
-        # L3: type-specific
+        # L3: type-specific — True => pass, else continue
         l3 = check_type_specific(pred_expr, gold_expr, pred, gold, var, answer_type)
-        if l3 is not None:
+        if l3 is True:
             if self.logger:
-                self.logger.info("verifier_L3", is_eq=l3, answer_type=answer_type)
-            return VerifyResult(is_eq=l3, level_used="L3", confidence=0.95,
+                self.logger.info("verifier_L3", is_eq=True, answer_type=answer_type)
+            return VerifyResult(is_eq=True, level_used="L3", confidence=0.95,
                                 evidence="type_specific")
 
         # L4: numerical sampling
         l4_result, pass_count, total_count = check_numerical(pred_expr, gold_expr, var, answer_type, self.n_samples)
-        if l4_result is True:
-            if self.logger:
-                self.logger.info("verifier_L4", is_eq=True, pass_count=pass_count, total_count=total_count)
-            return VerifyResult(is_eq=True, level_used="L4", confidence=0.9,
-                                evidence=f"numerical_{pass_count}/{total_count}")
+        if self.logger:
+            self.logger.info("verifier_L4", is_eq=l4_result, pass_count=pass_count, total_count=total_count)
+
         if l4_result is False:
-            if self.logger:
-                self.logger.info("verifier_L4", is_eq=False, pass_count=pass_count, total_count=total_count)
+            # L4 fail → immediate reject
             return VerifyResult(is_eq=False, level_used="L4", confidence=0.9,
                                 evidence=f"numerical_{pass_count}/{total_count}")
 
-        # L4 inconclusive -> maybe L5
-        if self.llm_client and self.llm_for_unsure and pass_count >= total_count * 0.5:
-            return check_llm_arbitration(
+        # L4 passed (True or inconclusive) → proceed to L5
+        if self.llm_client and self.llm_for_unsure:
+            return await check_llm_arbitration(
                 pred, gold, var, answer_type, question, pass_count, total_count,
                 self.llm_client, self.logger,
             )
 
-        return VerifyResult(is_eq=False, level_used="L4", confidence=0.5,
-                            evidence=f"inconclusive_{pass_count}/{total_count}")
+        return VerifyResult(is_eq=False, level_used="fail", confidence=0.0,
+                            evidence=f"L4_inconclusive_{pass_count}/{total_count}_no_L5")

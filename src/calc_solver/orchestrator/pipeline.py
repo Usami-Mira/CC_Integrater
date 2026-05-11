@@ -140,7 +140,7 @@ class Pipeline:
                     successful_solutions,
                     key=lambda s: (not s.self_check_passed, len(s.steps))
                 )
-                vr = self.evaluator.verifier.is_equivalent(
+                vr = await self.evaluator.verifier.is_equivalent(
                     best.final_answer or "", problem.gold_answer,
                     var=problem.variable,
                     answer_type=problem.answer_type,

@@ -34,7 +34,7 @@ class EvaluatorAgent(BaseAgent):
                 gold=problem.gold_answer[:200],
                 var=problem.variable,
                 answer_type=problem.answer_type)
-        vr = self.verifier.is_equivalent(
+        vr = await self.verifier.is_equivalent(
             pred, problem.gold_answer,
             var=problem.variable,
             answer_type=problem.answer_type,
@@ -61,7 +61,7 @@ class EvaluatorAgent(BaseAgent):
                 continue
             pred = sol.final_answer or sol.final_answer_sympy or ""
             try:
-                vr = self.verifier.is_equivalent(
+                vr = await self.verifier.is_equivalent(
                     pred, gold, var=var, answer_type=atype, question=problem.question
                 )
             except Exception as e:
@@ -78,7 +78,7 @@ class EvaluatorAgent(BaseAgent):
                 (s for _, s in correct),
                 key=lambda s: (not s.self_check_passed, len(s.steps))
             )
-            vr_best = self.verifier.is_equivalent(
+            vr_best = await self.verifier.is_equivalent(
                 best_sol.final_answer or "", gold, var=var, answer_type=atype
             )
             confidence = min(vr_best.confidence * (0.6 + 0.1 * method_agreement), 1.0)
@@ -103,7 +103,7 @@ class EvaluatorAgent(BaseAgent):
                 if i == j or not sj.final_answer:
                     continue
                 try:
-                    vr = self.verifier.is_equivalent(
+                    vr = await self.verifier.is_equivalent(
                         si.final_answer, sj.final_answer, var=var, answer_type=atype
                     )
                     if vr.is_eq:
