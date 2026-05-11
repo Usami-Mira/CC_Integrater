@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# ── calc-solver-v2: Setup Script ─────────────────────────────────────────────
+# ── CC-Integrater: Setup Script ──────────────────────────────────────────────
 # Usage:  bash setup.sh
-#         Creates venv, installs deps, verifies .env, runs smoke tests.
+#         Creates venv, installs deps, verifies setup, runs smoke test.
 # ─────────────────────────────────────────────────────────────────────────────
 
 RED='\033[0;31m'
@@ -23,8 +23,7 @@ cd "$(dirname "$0")"
 step "Checking Python"
 python3 -c "import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)" 2>/dev/null \
   || fail "Python ≥ 3.10 required (found: $(python3 --version 2>&1 || echo 'none'))"
-PY_VER=$(python3 --version 2>&1)
-info "Found $PY_VER"
+info "Found $(python3 --version 2>&1)"
 
 # ── 2. Virtual environment ───────────────────────────────────────────────────
 step "Setting up virtual environment"
@@ -39,42 +38,60 @@ source .venv/bin/activate
 
 # ── 3. Install dependencies ──────────────────────────────────────────────────
 step "Installing dependencies"
-pip install -q -e ".[dev]" 2>&1 | tail -3
-info "Installed all packages"
+pip install --upgrade pip -q
+pip install \
+  pandas \
+  pyarrow \
+  sympy \
+  pyyaml \
+  numpy \
+  latex2sympy2 \
+  python-dotenv \
+  tqdm \
+  pytest \
+  -q
+info "Installed: pandas, pyarrow, sympy, pyyaml, numpy, latex2sympy2, tqdm, pytest"
 
-# ── 4. Environment file ──────────────────────────────────────────────────────
-step "Checking environment"
-if [ -f ".env" ]; then
-  if grep -qE 'sk-[a-f0-9]{32}' .env 2>/dev/null; then
-    warn ".env appears to contain a placeholder/example key — edit it with your real DASHSCOPE_API_KEY"
-  elif grep -q 'sk-xxxx\|sk-xxxxxxxx' .env 2>/dev/null; then
-    fail ".env still has placeholder key. Edit .env and set DASHSCOPE_API_KEY."
-  else
-    info ".env loaded"
-  fi
+# ── 4. Verify core imports ───────────────────────────────────────────────────
+step "Verifying core imports"
+python -c "
+import pandas
+import pyarrow
+import sympy
+import yaml
+import numpy
+import latex2sympy2
+print('  pandas   ', pandas.__version__)
+print('  sympy    ', sympy.__version__)
+print('  pyyaml   ', yaml.__version__)
+print('  numpy    ', numpy.__version__)
+print('  latex2sympy2 loaded')
+" || fail "Import check failed"
+info "All core imports OK"
+
+# ── 5. Claude Code ───────────────────────────────────────────────────────────
+step "Checking Claude Code"
+if command -v claude &>/dev/null; then
+  info "Claude Code found: $(claude --version 2>/dev/null || echo 'installed')"
 else
-  warn ".env not found, copying from .env.example"
-  cp .env.example .env
-  fail "Edit .env with your DASHSCOPE_API_KEY and re-run this script"
+  warn "claude not in PATH — CC --print mode requires: npm install -g @anthropic-ai/claude-code"
 fi
 
-# ── 5. Data check ────────────────────────────────────────────────────────────
+# ── 6. Data check ────────────────────────────────────────────────────────────
 step "Checking data files"
-if [ -f "data/raw/synth-v1.parquet" ]; then
-  info "data/raw/synth-v1.parquet exists ($(wc -c < data/raw/synth-v1.parquet) bytes)"
+PARQUET=$(find . -maxdepth 2 -name "*.parquet" ! -path "./.venv/*" 2>/dev/null | head -1)
+if [ -n "$PARQUET" ]; then
+  info "Parquet file found: $PARQUET ($(wc -c < "$PARQUET") bytes)"
 else
-  warn "data/raw/synth-v1.parquet not found — real-data runs need a parquet file"
+  warn "No .parquet files found — put your data in the project root or data/raw/"
 fi
 
-# ── 6. Smoke tests ───────────────────────────────────────────────────────────
-step "Running smoke tests (50 unit tests, no API)"
-pytest -q 2>&1 | tail -5
-info "Tests passed"
-
-# ── 7. Demo session ─────────────────────────────────────────────────────────
-step "Running demo session (mock LLM, end-to-end pipeline)"
-python scripts/demo_session.py 2>&1 | tail -15
-info "Demo completed"
+# ── 7. Quick smoke test ──────────────────────────────────────────────────────
+step "Running smoke test (SymPy tools + Verifier)"
+python scripts/cc_sympy.py integrate_indef "x**2" && \
+python scripts/cc_sympy.py simplify "sin(x)**2 + cos(x)**2" && \
+python scripts/cc_sympy.py differentiate "sin(x)" || fail "SymPy tools failed"
+info "Smoke test passed"
 
 # ── Done ─────────────────────────────────────────────────────────────────────
 echo ""
@@ -83,11 +100,8 @@ echo -e "  ${GREEN}Setup complete${NC}"
 echo "${SEP}"
 echo ""
 echo "Next steps:"
-echo "  1. Edit .env with your real DASHSCOPE_API_KEY (if not already done)"
-echo "  2. Place your parquet files in data/raw/"
-echo "  3. Quick run:  python scripts/run_batch.py --parquet data/raw/synth-v1.parquet --K 3 --max-rows 10"
-echo "  4. Full run:   python scripts/run_batch.py --parquet data/raw/synth-v1.parquet --K 3"
-echo ""
-echo "Activate env:    source .venv/bin/activate"
-echo "Run tests:       pytest -q"
+echo "  Activate env:  source .venv/bin/activate"
+echo "  Quick run:     bash scripts/run_cc.sh --id 19_15"
+echo "  Batch run:     bash scripts/run_cc.sh --n 10 --K 3 --workers 3"
+echo "  Tests:         pytest -q"
 echo ""

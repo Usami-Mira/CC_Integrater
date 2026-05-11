@@ -1,0 +1,12 @@
+{
+  "passed": false,
+  "issues": [
+    "final_answer_sympy only contains v(t) and s(t) formulas, omitting the direction-change and movement conclusions",
+    "Gold answer: v = t^2 - 3t + 4, s = t^3/3 - 3t^2/2 + 4t, never changes direction, always moves to the right",
+    "Builder's prose notes the correct conclusions (never changes direction, never moves left) but these are not included in the final_answer_sympy field that the verifier compares",
+    "The verifier does string-level comparison on final_answer_sympy — the missing text causes a False verdict"
+  ],
+  "feedback": "The builder's math is entirely correct: both integrations, constants of integration (v(0)=4, s(0)=0), and the discriminant analysis of v(t)=0 are all accurate. The failure is purely a completeness issue — the problem asks for four things (v formula, s formula, direction-change point, left-movement region) but final_answer_sympy only includes the first two. The qualitative conclusions appeared in prose steps but were never incorporated into the final JSON answer.",
+  "should_retry": true,
+  "retry_hint": "Keep the same integration approach. After computing v(t) and s(t), explicitly include the direction conclusions in final_answer_sympy as text, e.g.: 'v(t) = t**2 - 3*t + 4, s(t) = t**3/3 - 3*t**2/2 + 4*t, never changes direction, always moves right'. The gold answer format is 'v = ..., s = ..., never changes direction, always moves to the right.' — match this structure."
+}
