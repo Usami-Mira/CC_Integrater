@@ -45,8 +45,8 @@ info "Installed all packages"
 # ── 4. Environment file ──────────────────────────────────────────────────────
 step "Checking environment"
 if [ -f ".env" ]; then
-  if grep -q 'sk-8522a2ac103440e0b57f5cf1c9ef6ff2' .env 2>/dev/null; then
-    warn ".env contains the placeholder/example key — edit it with your real DASHSCOPE_API_KEY"
+  if grep -qE 'sk-[a-f0-9]{32}' .env 2>/dev/null; then
+    warn ".env appears to contain a placeholder/example key — edit it with your real DASHSCOPE_API_KEY"
   elif grep -q 'sk-xxxx\|sk-xxxxxxxx' .env 2>/dev/null; then
     fail ".env still has placeholder key. Edit .env and set DASHSCOPE_API_KEY."
   else
