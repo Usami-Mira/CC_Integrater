@@ -1,7 +1,0 @@
-{
-  "passed": true,
-  "issues": [],
-  "feedback": "Builder's answer 2*sin(sqrt(x)) is correct and verified. Note: the builder solved via u-substitution (t=√x) rather than the proposed 'integration by parts with self-reference' strategy, but the answer is mathematically correct. The process included a differentiation check which confirmed correctness.",
-  "should_retry": false,
-  "retry_hint": ""
-}

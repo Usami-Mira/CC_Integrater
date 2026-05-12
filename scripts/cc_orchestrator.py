@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Claude Code Sandbox Manager — Orchestrator Edition.
+Claude Code Sandbox Manager — Orchestrator Edition (async).
 
 Manages the full pipeline: Planner → Builder×K + Evaluator×K loops → Verifier → Summary.
 
@@ -16,14 +16,48 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import os
-import subprocess
 import sys
-import tempfile
-from dataclasses import dataclass, field
+import threading
 from datetime import datetime
 from pathlib import Path
+
+# ── Config loader ────────────────────────────────────────────────────────────
+# Reads from configs/{config,prompts,model}.yaml. CLI args override config.yaml values.
+
+_CONFIGS_DIR = Path(__file__).parent.parent / "configs"
+
+
+def _load_yaml(filename: str) -> dict:
+    import yaml
+    return yaml.safe_load((_CONFIGS_DIR / filename).read_text(encoding="utf-8"))
+
+
+def load_all_configs() -> dict:
+    config = _load_yaml("config.yaml")
+    prompts = _load_yaml("prompts.yaml")
+    model = _load_yaml("model.yaml")
+    return {"config": config, "prompts": prompts, "model": model}
+
+
+def _prompt(prompts: dict, key: str) -> str:
+    """Get a CC orchestrator prompt from prompts['cc_orchestrator'][key]."""
+    return prompts["cc_orchestrator"][key]
+
+
+get_prompt = _prompt  # public alias
+
+
+def _config_value(config: dict, *keys: str, default=None):
+    """Walk nested config keys, e.g. _config_value(cfg, 'run', 'K', default=3)."""
+    d = config
+    for k in keys:
+        if not isinstance(d, dict):
+            return default
+        d = d.get(k, default)
+    return d
 
 
 # ── Problem loader ───────────────────────────────────────────────────────────
@@ -59,8 +93,6 @@ def load_problems(parquet_path: str, max_rows: int | None = None) -> list[dict]:
 
 # ── Logging ──────────────────────────────────────────────────────────────────
 
-import threading
-
 class CCLogger:
     def __init__(self, log_dir: str):
         self.log_dir = Path(log_dir)
@@ -77,27 +109,41 @@ class CCLogger:
             self._output_f.write(line + "\n")
             self._output_f.flush()
 
-    def log_output(self, role: str, output: str) -> None:
+    async def log_output(self, role: str, output: str) -> None:
         path = self.log_dir / f"{role}_output.log"
-        with open(path, "a", encoding="utf-8") as f:
-            f.write(output + "\n")
+        await asyncio.to_thread(self._write_append, path, output + "\n")
         with self._lock:
             self._output_f.write(f"--- {role} output ({len(output)} chars) ---\n")
             self._output_f.flush()
 
-    def write_trace(self, problem_id: str, data: dict) -> None:
-        # JSON trace
-        path = self.log_dir / "traces" / f"{problem_id}.json"
-        path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-        # Human-readable MD
+    async def write_trace(self, problem_id: str, data: dict) -> None:
+        trace_path = self.log_dir / "traces" / f"{problem_id}.json"
         md_path = self.log_dir / "traces" / f"{problem_id}.md"
-        md_path.write_text(_render_trace_md(data), encoding="utf-8")
+        json_text = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
+        md_text = _render_trace_md(data)
+        await asyncio.gather(
+            asyncio.to_thread(self._write_text, trace_path, json_text),
+            asyncio.to_thread(self._write_text, md_path, md_text),
+        )
 
-    def write_summary(self, summary: dict) -> None:
-        path = self.log_dir / "summary.json"
-        path.write_text(json.dumps(summary, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    async def write_summary(self, summary: dict) -> None:
+        summary_path = self.log_dir / "summary.json"
         md_path = self.log_dir / "summary.md"
-        md_path.write_text(_render_summary_md(summary), encoding="utf-8")
+        json_text = json.dumps(summary, indent=2, ensure_ascii=False) + "\n"
+        md_text = _render_summary_md(summary)
+        await asyncio.gather(
+            asyncio.to_thread(self._write_text, summary_path, json_text),
+            asyncio.to_thread(self._write_text, md_path, md_text),
+        )
+
+    @staticmethod
+    def _write_text(path: Path, content: str) -> None:
+        path.write_text(content, encoding="utf-8")
+
+    @staticmethod
+    def _write_append(path: Path, content: str) -> None:
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(content)
 
     def close(self) -> None:
         self._output_f.close()
@@ -115,7 +161,6 @@ def _render_trace_md(data: dict) -> str:
     lines.append(f"**状态** {'✅ 正确' if data.get('status') == 'CORRECT' else '❌ 错误'}")
     lines.append("")
 
-    # Group solutions by strategy and render each one
     if data.get("solutions"):
         lines.append("## 解题过程")
         lines.append("")
@@ -165,7 +210,6 @@ def _render_trace_md(data: dict) -> str:
             lines.append("---")
             lines.append("")
 
-        # Summary
         lines.append(f"## 最终结果")
         lines.append("")
         if data.get("answer"):
@@ -242,201 +286,66 @@ def _render_summary_md(summary: dict) -> str:
     return "\n".join(lines)
 
 
-# ── Claude Code Agent invoker ────────────────────────────────────────────────
+# ── Claude Code Agent invoker (async) ────────────────────────────────────────
 
-def run_cc_agent(prompt: str, timeout: int = 300) -> str:
-    """Run Claude Code in --print mode with all permissions skipped."""
-    result = subprocess.run(
-        ["claude", "--print", "--dangerously-skip-permissions", prompt],
-        capture_output=True, text=True, timeout=timeout,
-        env={**os.environ, "CLAUDE_CODE_NO_ANALYTICS": "1"},
+async def run_cc_agent(prompt: str, timeout: int = 300) -> str:
+    """Run Claude Code in --print mode with all permissions skipped.
+
+    Passes the prompt via stdin to avoid CLI argument length limits that
+    can truncate large prompts.
+    """
+    proc = await asyncio.create_subprocess_exec(
+        "claude", "-p", "--dangerously-skip-permissions",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        stdin=asyncio.subprocess.PIPE,
+        env={**{k: v for k, v in os.environ.items() if v is not None}, "CLAUDE_CODE_NO_ANALYTICS": "1"},
     )
-    return result.stdout.strip()
-
-
-# ── Prompts ──────────────────────────────────────────────────────────────────
-
-PLANNER_PROMPT = """\
-You are a calculus strategy generator. Given the problem below, output exactly {K} fundamentally different solving strategies as JSON.
-
-Problem: {question}
-Problem type: {problem_type}
-
-Available methods:
-- Indefinite integrals: basic formula / u-substitution / integration by parts / trig substitution / Weierstrass / partial fractions
-- Definite integrals: above + symmetry / King's rule / Feynman trick
-
-IMPORTANT: Your response MUST be valid JSON. No text before or after the JSON object.
-
-The output must follow this exact structure:
-{{"strategies": [
-  {{"strategy_id": "s1", "name": "short name", "rationale": "one sentence why", "steps_outline": ["step 1", "step 2", ...]}},
-  {{"strategy_id": "s2", "name": "...", "rationale": "...", "steps_outline": ["step 1", "step 2", ...]}}
-]}}
-"""
-
-PLANNER_FALLBACK = """\
-Your previous response was not valid JSON. Please output ONLY the JSON object below, with NO text before or after.
-
-Problem: {question}
-Output {K} strategies as JSON with this exact structure:
-{{"strategies": [
-  {{"strategy_id": "s1", "name": "...", "rationale": "...", "steps_outline": ["step 1", "step 2"]}}
-]}}
-"""
-
-REPLAN_PROMPT = """\
-Previous strategies failed: {failed}. Generate {K} completely different strategies.
-
-Problem: {question}
-
-DO NOT discuss. Output ONLY JSON:
-{{"strategies": [
-  {{"strategy_id": "s1", "name": "...", "rationale": "...", "steps_outline": ["step1", "step2", ...]}}
-]}}
-"""
-
-BUILDER_PROMPT = """\
-Solve this calculus problem step by step. You MUST use Bash commands to call the SymPy tools.
-
-Problem: {question}
-Strategy: {strategy_name} — {strategy_rationale}
-Outline:
-{steps_outline}
-
-Available tools (call via `python scripts/cc_sympy.py`):
-  python scripts/cc_sympy.py integrate_indef "expr" [var]
-  python scripts/cc_sympy.py integrate_def "expr" var "a" "b"
-  python scripts/cc_sympy.py differentiate "expr" [var] [n]
-  python scripts/cc_sympy.py simplify "expr"
-  python scripts/cc_sympy.py parse "expr" [var]
-  python scripts/cc_sympy.py solve "expr" [var]
-  python scripts/cc_sympy.py limit "expr" var "point" [dir]
-  python scripts/cc_sympy.py series "expr" var "point" [n]
-  python scripts/cc_sympy.py substitute "expr" "mapping"
-
-DO NOT explain. DO NOT discuss. DO the computation step by step.
-For indefinite integrals, verify by differentiating your result.
-
-When done, output ONLY this JSON at the end (no text before or after):
-{{"final_answer": "LaTeX", "final_answer_sympy": "SymPy-parseable, use log() not ln()", "steps": [
-  {{"step": 1, "action": "tool", "tool": "simplify", "args": {{"expr_str": "1/sec(x)"}}, "result": "cos(x)", "thought": "simplify integrand"}},
-  {{"step": 2, "action": "tool", "tool": "integrate_indef", "args": {{"expr_str": "cos(x)", "var": "x"}}, "result": "sin(x)", "thought": "compute integral"}}
-], "steps_summary": "brief description"}}
-"""
-
-EVALUATOR_PROMPT = """\
-Review a Builder's solution attempt. The automated verifier already checked the answer.
-
-Problem: {question}
-Strategy: {strategy_name}
-Builder's answer: {builder_answer}
-Builder's process: {steps_summary}
-
-Verifier result: {verifier_verdict} (true = correct, false = incorrect)
-
-You can only trust this boolean. Do not second-guess it.
-
-Output ONLY this JSON:
-{{
-  "passed": true/false,
-  "issues": ["list problems"],
-  "feedback": "what went wrong and what to try differently",
-  "should_retry": true/false,
-  "retry_hint": "specific guidance"
-}}
-"""
-
-RETRY_BUILDER_PROMPT = """\
-Solve this calculus problem again. Your previous attempt was rejected.
-
-Problem: {question}
-Strategy: {strategy_name} — {strategy_rationale}
-Outline:
-{steps_outline}
-
-Previous answer: {previous_answer}
-
-Evaluator issues:
-{evaluator_issues}
-
-Evaluator feedback:
-{evaluator_feedback}
-
-Available tools (call via `python scripts/cc_sympy.py`):
-  python scripts/cc_sympy.py integrate_indef "expr" [var]
-  python scripts/cc_sympy.py integrate_def "expr" var "a" "b"
-  python scripts/cc_sympy.py differentiate "expr" [var] [n]
-  python scripts/cc_sympy.py simplify "expr"
-  python scripts/cc_sympy.py parse "expr" [var]
-  python scripts/cc_sympy.py solve "expr" [var]
-  python scripts/cc_sympy.py limit "expr" var "point" [dir]
-  python scripts/cc_sympy.py series "expr" var "point" [n]
-  python scripts/cc_sympy.py substitute "expr" "mapping"
-
-Try a different approach. DO NOT discuss. Output ONLY this JSON when done:
-{{"final_answer": "LaTeX", "final_answer_sympy": "SymPy-parseable, use log() not ln()", "steps": [
-  {{"step": 1, "action": "tool", "tool": "...", "args": {{...}}, "result": "...", "thought": "..."}}
-], "steps_summary": "brief description"}}
-"""
-
-L5_PROMPT = """\
-You are a mathematical equivalence judge. Determine if two expressions are mathematically equivalent.
-
-Problem context: {question}
-Expression P: {pred}
-Expression G: {gold}
-
-Note: I am NOT telling you which is the student's answer and which is the standard answer. Just determine if they are equivalent.
-
-Rules:
-- Only true if P and G are identical for all valid inputs in the domain
-- For indefinite integrals, they can differ by a constant
-- Use standard mathematical identities
-- Consider domain differences (e.g., ln(x) vs ln|x| are NOT equivalent)
-
-Output ONLY:
-{{"equivalent": true/false, "reason": "brief explanation in Chinese"}}
-"""
+    try:
+        stdout, stderr = await asyncio.wait_for(
+            proc.communicate(prompt.encode()),
+            timeout=timeout,
+        )
+        return stdout.decode().strip()
+    except asyncio.TimeoutError:
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass
+        return ""
 
 
 # ── Verifier (pure Python, gold answer never enters Claude context) ───────────
 
-def run_verifier(pred: str, gold: str, var: str = "x",
-                 answer_type: str = "expression", question: str = "") -> dict:
-    """Run L1-L4 verification. Gold answer stays here — Claude never sees it."""
-    code = (
-        "import sys, asyncio; sys.path.insert(0, 'src'); "
-        "from calc_solver.tools.verifier import Verifier; "
-        f"v = Verifier(llm_client=None, llm_for_unsure=False, n_samples=30); "
-        f"r = asyncio.run(v.is_equivalent({pred!r}, {gold!r}, var={var!r}, answer_type={answer_type!r}, question={question!r})); "
-        "import json; print(json.dumps(r.model_dump(), ensure_ascii=False))"
-    )
+async def run_verifier(pred: str, gold: str, var: str = "x",
+                       answer_type: str = "expression", question: str = "",
+                       n_samples: int = 30) -> dict:
+    """Run L1-L4 verification in a thread so CPU-bound SymPy doesn't block the event loop. Gold answer stays here — Claude never sees it."""
+    from calc_solver.tools.verifier import Verifier
     try:
-        result = subprocess.run(
-            [sys.executable, "-c", code],
-            capture_output=True, text=True, timeout=30,
+        v = Verifier(llm_client=None, llm_for_unsure=False, n_samples=n_samples)
+        # is_equivalent is async but its L2/L3/L4 checks are CPU-bound SymPy;
+        # offload to a thread so other problems can proceed concurrently.
+        r = await asyncio.to_thread(
+            lambda: asyncio.run(v.is_equivalent(pred, gold, var=var, answer_type=answer_type, question=question))
         )
-        return json.loads(result.stdout.strip())
-    except subprocess.TimeoutExpired:
-        return {"is_eq": False, "level_used": "fail", "confidence": 0.0,
-                "evidence": "verifier subprocess timed out"}
+        return r.model_dump()
     except Exception as e:
         err = str(e)[:200]
         return {"is_eq": False, "level_used": "fail", "confidence": 0.0,
                 "evidence": err}
 
 
-def run_l5_arbitration(pred: str, gold: str, question: str = "",
-                       answer_type: str = "expression") -> dict:
+async def run_l5_arbitration(pred: str, gold: str, question: str = "",
+                             answer_type: str = "expression",
+                             prompt_template: str = "", timeout: int = 120) -> dict:
     """L5: Claude judges equivalence between two expressions (blind)."""
-    prompt = L5_PROMPT.format(
+    prompt = prompt_template.format(
         question=question[:200] if question else "N/A",
         pred=pred, gold=gold,
     )
-    raw = run_cc_agent(prompt, timeout=120)
+    raw = await run_cc_agent(prompt, timeout=timeout)
     try:
-        # Extract JSON
         import re
         m = re.search(r"\{.*\}", raw, re.DOTALL)
         if m:
@@ -448,8 +357,9 @@ def run_l5_arbitration(pred: str, gold: str, question: str = "",
 
 # ── Pipeline logic ───────────────────────────────────────────────────────────
 
-def solve_one_problem(problem: dict, K: int, max_steps: int, max_loops: int,
-                      logger: CCLogger) -> dict:
+async def solve_one_problem(problem: dict, K: int, max_steps: int, max_loops: int,
+                            logger: CCLogger, prompts: dict,
+                            cc_timeouts: dict, verifier_cfg: dict) -> dict:
     """Full pipeline for one problem. Returns trace data."""
     logger.log(f"=== Problem: {problem['problem_id']} ===")
     logger.log(f"  Question: {problem['question'][:80]}...")
@@ -468,34 +378,40 @@ def solve_one_problem(problem: dict, K: int, max_steps: int, max_loops: int,
         "solutions": [],
     }
 
+    n_samples = verifier_cfg.get("n_samples", 30)
+
     for loop_idx in range(max_loops):
         trace["loops"] = loop_idx + 1
 
         # Phase 1: Planner (with JSON parse retry)
         logger.log(f"  Loop {loop_idx+1}: Planning...")
         if loop_idx == 0:
-            planner_prompt = PLANNER_PROMPT.format(
+            planner_prompt = _prompt(prompts, "planner").format(
                 question=problem["question"],
                 problem_type=problem["problem_type"],
                 K=K,
             )
+            planner_timeout = cc_timeouts.get("cc_timeout_planner", 180)
         else:
             failed_names = ", ".join(s["name"] for s in trace["strategies"][-K:])
-            planner_prompt = REPLAN_PROMPT.format(
+            planner_prompt = _prompt(prompts, "replan").format(
                 question=problem["question"],
                 failed=failed_names,
                 K=K,
             )
+            planner_timeout = cc_timeouts.get("cc_timeout_planner_fallback", 120)
 
-        planner_output = run_cc_agent(planner_prompt, timeout=180)
-        logger.log_output("planner", planner_output)
+        planner_output = await run_cc_agent(planner_prompt, timeout=planner_timeout)
+        await logger.log_output("planner", planner_output)
 
         strategies = parse_strategies(planner_output, K)
         if not strategies:
             logger.log("  Planner JSON parse failed, retrying with stricter prompt...")
-            fallback = PLANNER_FALLBACK.format(question=problem["question"], K=K)
-            planner_output = run_cc_agent(fallback, timeout=120)
-            logger.log_output("planner_retry", planner_output)
+            fallback = _prompt(prompts, "planner_fallback").format(
+                question=problem["question"], K=K)
+            planner_output = await run_cc_agent(
+                fallback, timeout=cc_timeouts.get("cc_timeout_planner_fallback", 120))
+            await logger.log_output("planner_retry", planner_output)
             strategies = parse_strategies(planner_output, K)
             if not strategies:
                 logger.log("  Planner still returned no strategies, giving up")
@@ -509,11 +425,11 @@ def solve_one_problem(problem: dict, K: int, max_steps: int, max_loops: int,
 
             # Builder ↔ Evaluator loop (max 2 retries)
             best_solution = None
-            retry_feedback = None  # accumulated from evaluator for retry
+            retry_feedback = None
 
-            for retry_idx in range(2):  # 1st attempt + 1 retry
+            for retry_idx in range(2):
                 if retry_idx == 0:
-                    builder_prompt = BUILDER_PROMPT.format(
+                    builder_prompt = _prompt(prompts, "builder").format(
                         question=problem["question"],
                         strategy_name=strat["name"],
                         strategy_rationale=strat["rationale"],
@@ -523,7 +439,7 @@ def solve_one_problem(problem: dict, K: int, max_steps: int, max_loops: int,
                     issues = retry_feedback.get("issues", []) if retry_feedback else []
                     feedback = retry_feedback.get("feedback", "") if retry_feedback else ""
                     prev = best_solution.get("final_answer", "") if best_solution else ""
-                    builder_prompt = RETRY_BUILDER_PROMPT.format(
+                    builder_prompt = _prompt(prompts, "builder_retry").format(
                         question=problem["question"],
                         strategy_name=strat["name"],
                         strategy_rationale=strat["rationale"],
@@ -533,8 +449,9 @@ def solve_one_problem(problem: dict, K: int, max_steps: int, max_loops: int,
                         evaluator_feedback=feedback,
                     )
 
-                builder_output = run_cc_agent(builder_prompt, timeout=300)
-                logger.log_output(f"builder_{retry_idx+1}", builder_output)
+                builder_timeout = cc_timeouts.get("cc_timeout_builder", 300)
+                builder_output = await run_cc_agent(builder_prompt, timeout=builder_timeout)
+                await logger.log_output(f"builder_{retry_idx+1}", builder_output)
 
                 solution = parse_builder_output(builder_output)
                 pred = solution.get("final_answer_sympy") or solution.get("final_answer", "")
@@ -543,23 +460,25 @@ def solve_one_problem(problem: dict, K: int, max_steps: int, max_loops: int,
                     break
 
                 # Verifier (pure Python, gold stays in orchestrator)
-                vr = run_verifier(
+                vr = await run_verifier(
                     pred, problem["gold_answer"],
                     var="x", answer_type="expression",
                     question=problem["question"],
+                    n_samples=n_samples,
                 )
                 logger.log(f"  Verifier (attempt {retry_idx+1}): is_eq={vr['is_eq']}, level={vr['level_used']}")
 
                 # Evaluator (receives only bool from Verifier, not gold_answer)
-                evaluator_prompt = EVALUATOR_PROMPT.format(
+                evaluator_prompt = _prompt(prompts, "evaluator").format(
                     question=problem["question"],
                     strategy_name=strat["name"],
                     builder_answer=pred[:200],
                     steps_summary=solution.get("steps_summary", ""),
                     verifier_verdict=vr["is_eq"],
                 )
-                evaluator_output = run_cc_agent(evaluator_prompt, timeout=120)
-                logger.log_output("evaluator", evaluator_output)
+                evaluator_timeout = cc_timeouts.get("cc_timeout_evaluator", 120)
+                evaluator_output = await run_cc_agent(evaluator_prompt, timeout=evaluator_timeout)
+                await logger.log_output("evaluator", evaluator_output)
                 evaluator_result = parse_evaluator_output(evaluator_output)
 
                 trace["solutions"].append({
@@ -583,9 +502,8 @@ def solve_one_problem(problem: dict, K: int, max_steps: int, max_loops: int,
                     trace["verifier_result"] = vr
                     trace["builder_raw_output"] = builder_output
                     best_solution = solution
-                    break  # correct, no need to retry
+                    break
 
-                # Check if Evaluator says retry
                 if not evaluator_result.get("should_retry", False):
                     logger.log(f"  Evaluator says give up: {evaluator_result.get('issues', [])}")
                     break
@@ -634,7 +552,10 @@ def _extract_json(raw: str) -> str | None:
                 json.loads(content)
                 return content
             except Exception:
-                pass
+                # Try repairing truncated JSON (Claude sometimes cuts off mid-output)
+                repaired = _repair_truncated_json(content)
+                if repaired is not None:
+                    return repaired
 
     # Strategy 2: Find JSON-like content by brace counting, but skip braces inside quoted strings
     depth = 0
@@ -665,8 +586,94 @@ def _extract_json(raw: str) -> str | None:
                     json.loads(candidate)
                     return candidate
                 except Exception:
-                    pass
+                    repaired = _repair_truncated_json(candidate)
+                    if repaired is not None:
+                        return repaired
                 start = None
+
+    # If the loop ended with unclosed braces (truncated JSON), try repair
+    if depth > 0 and start is not None:
+        candidate = raw[start:]
+        repaired = _repair_truncated_json(candidate)
+        if repaired is not None:
+            return repaired
+
+    return None
+
+
+def _repair_truncated_json(content: str) -> str | None:
+    """Attempt to fix a JSON string that was truncated mid-output.
+
+    Claude --print sometimes cuts off the last few characters or adds an
+    extra closing brace. This tries several repair strategies.
+    """
+    # Walk through the content tracking depth of [], {}, and ""
+    closing = []
+    in_string = False
+    escape = False
+
+    for i, ch in enumerate(content):
+        if escape:
+            escape = False
+            continue
+        if ch == "\\":
+            if i + 1 < len(content) and content[i + 1] == '"':
+                continue
+            escape = True
+            continue
+        if ch == '"':
+            if in_string:
+                in_string = False
+            else:
+                in_string = True
+            continue
+        if not in_string:
+            if ch in "[{":
+                closing.append("]" if ch == "[" else "}")
+            elif ch == "]":
+                if closing and closing[-1] == "]":
+                    closing.pop()
+            elif ch == "}":
+                if closing and closing[-1] == "}":
+                    closing.pop()
+
+    # Strategy A: close unclosed brackets/braces
+    if in_string or closing:
+        fix = []
+        if in_string:
+            fix.append('"')
+        fix.extend(reversed(closing))
+        candidate = content + "".join(fix)
+        try:
+            json.loads(candidate)
+            return candidate
+        except Exception:
+            pass
+
+    # Strategy B: strip trailing } chars and add ]} (handles extra } at end)
+    stripped = content.rstrip("}").rstrip()
+    if stripped and len(stripped) < len(content):
+        for suffix in ("]}", "]}"):
+            candidate = stripped + suffix
+            try:
+                json.loads(candidate)
+                return candidate
+            except Exception:
+                pass
+
+    # Strategy C: targeted truncation — only cut near the end where we
+    # expect truncation, and require the result to be a "real" JSON object
+    # (i.e. must contain a colon, ruling out bare "{}").
+    for cut in range(len(content) - 1, max(0, len(content) - 300), -1):
+        for suffix in ("]}", "]}", "]", "}"):
+            candidate = content[:cut] + suffix
+            if ":" not in candidate:
+                continue  # skip bare braces like {} from LaTeX
+            try:
+                json.loads(candidate)
+                return candidate
+            except Exception:
+                pass
 
     return None
 
@@ -768,28 +775,47 @@ def build_summary(traces: list[dict]) -> dict:
 
 # ── Entry point ──────────────────────────────────────────────────────────────
 
-def _solve_and_write(problem: dict, K: int, max_steps: int, max_loops: int,
-                     logger: CCLogger, idx: int) -> dict:
+async def _solve_and_write(problem: dict, K: int, max_steps: int, max_loops: int,
+                           logger: CCLogger, idx: int, semaphore: asyncio.Semaphore,
+                           prompts: dict, cc_timeouts: dict, verifier_cfg: dict) -> dict:
     """Worker: solve one problem and write its trace. Returns trace dict."""
-    logger.log(f"[worker {idx}] === Problem: {problem['problem_id']} ===")
-    trace = solve_one_problem(problem, K, max_steps, max_loops, logger)
-    logger.write_trace(problem["problem_id"], trace)
-    return trace
+    async with semaphore:
+        logger.log(f"[worker] === Problem: {problem['problem_id']} ===")
+        trace = await solve_one_problem(
+            problem, K, max_steps, max_loops, logger, prompts, cc_timeouts, verifier_cfg)
+        await logger.write_trace(problem["problem_id"], trace)
+        return trace
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Claude Code Orchestrator — Sandboxed Pipeline")
-    parser.add_argument("--parquet", default="question_filtered_example.parquet")
-    parser.add_argument("--n", type=int, default=None, help="Max problems")
-    parser.add_argument("--id", type=str, default=None, help="Specific problem ID")
-    parser.add_argument("--K", type=int, default=3)
-    parser.add_argument("--max-steps", type=int, default=12)
-    parser.add_argument("--max-loops", type=int, default=3)
-    parser.add_argument("--workers", type=int, default=3, help="Parallel problem concurrency")
-    args = parser.parse_args()
+async def main_async(args, all_cfg: dict):
+    config = all_cfg["config"]
+    prompts = all_cfg["prompts"]
+
+    # Resolve defaults from config.yaml (CLI args override)
+    cfg_run = config.get("run", {})
+    cfg_data = config.get("data", {})
+    cfg_verifier = config.get("verifier", {})
+
+    parquet_path = args.parquet or cfg_data.get("parquet_file", "question_filtered_example.parquet")
+    K = args.K if args.K is not None else cfg_run.get("K", 3)
+    max_steps = args.max_steps if args.max_steps is not None else cfg_run.get("builder_max_steps", 12)
+    max_loops = args.max_loops if args.max_loops is not None else cfg_run.get("max_outer_loops", 3)
+    workers = args.workers if args.workers is not None else cfg_run.get("problem_concurrency", 8)
+    n_samples = cfg_verifier.get("n_samples", 30)
+
+    # Build CC timeout dict from config
+    cc_timeouts = {
+        "cc_timeout_planner": cfg_run.get("cc_timeout_planner", 180),
+        "cc_timeout_planner_fallback": cfg_run.get("cc_timeout_planner_fallback", 120),
+        "cc_timeout_builder": cfg_run.get("cc_timeout_builder", 300),
+        "cc_timeout_evaluator": cfg_run.get("cc_timeout_evaluator", 120),
+        "cc_timeout_l5": cfg_run.get("cc_timeout_l5", 120),
+    }
+
+    verifier_cfg = {"n_samples": n_samples}
 
     # Load problems
-    problems = load_problems(args.parquet, max_rows=args.n)
+    problems = load_problems(parquet_path, max_rows=args.n)
     if args.id:
         problems = [p for p in problems if p["problem_id"] == args.id]
 
@@ -797,52 +823,56 @@ def main():
         print("No problems to solve.")
         sys.exit(1)
 
-    print(f"Loaded {len(problems)} problems from {args.parquet}")
+    print(f"Loaded {len(problems)} problems from {parquet_path}")
 
-    # Create log directory
+    # Create log directory (from config)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_dir = f"logs/cc/{timestamp}"
+    log_base = config.get("paths", {}).get("log_dir", "logs/cc")
+    log_dir = f"{log_base}/{timestamp}"
     logger = CCLogger(log_dir)
 
     print(f"Log directory: {log_dir}")
-    print(f"Workers: {args.workers}")
+    print(f"Workers: {workers}")
     print("")
 
     try:
-        # Solve problems in parallel
-        from concurrent.futures import ThreadPoolExecutor, as_completed
+        semaphore = asyncio.Semaphore(workers)
 
-        traces = [None] * len(problems)  # preserve order
+        async def _indexed_solve(idx, problem):
+            try:
+                trace = await _solve_and_write(
+                    problem, K, max_steps, max_loops, logger, idx, semaphore,
+                    prompts, cc_timeouts, verifier_cfg)
+                return idx, trace, None
+            except Exception as e:
+                return idx, None, e
 
-        with ThreadPoolExecutor(max_workers=args.workers) as pool:
-            futures = {}
-            for i, problem in enumerate(problems):
-                f = pool.submit(_solve_and_write, problem, args.K, args.max_steps, args.max_loops, logger, i)
-                futures[f] = i
+        coros = [_indexed_solve(i, problem) for i, problem in enumerate(problems)]
 
-            done_count = 0
-            for f in as_completed(futures):
-                idx = futures[f]
-                try:
-                    traces[idx] = f.result()
-                except Exception as e:
-                    logger.log(f"  Problem {problems[idx]['problem_id']} crashed: {e}")
-                    traces[idx] = {
-                        "problem_id": problems[idx]["problem_id"],
-                        "question": problems[idx]["question"],
-                        "gold_answer": problems[idx]["gold_answer"],
-                        "status": "WRONG", "answer": "", "best_strategy": "",
-                        "verifier_level": "N/A", "verifier_result": None,
-                        "loops": 0, "strategies": [], "solutions": [],
-                    }
-                done_count += 1
-                logger.log(f"[{done_count}/{len(problems)}] problems completed")
+        traces = [None] * len(problems)
+        done_count = 0
+        for coro in asyncio.as_completed(coros):
+            idx, trace, exc = await coro
+            if exc:
+                logger.log(f"  Problem {problems[idx]['problem_id']} crashed: {exc}")
+                traces[idx] = {
+                    "problem_id": problems[idx]["problem_id"],
+                    "question": problems[idx]["question"],
+                    "gold_answer": problems[idx]["gold_answer"],
+                    "status": "WRONG", "answer": "", "best_strategy": "",
+                    "verifier_level": "N/A", "verifier_result": None,
+                    "loops": 0, "strategies": [], "solutions": [],
+                }
+            else:
+                traces[idx] = trace
+            done_count += 1
+            logger.log(f"[{done_count}/{len(problems)}] problems completed")
 
         traces = [t for t in traces if t is not None]
 
         # Build and save summary
         summary = build_summary(traces)
-        logger.write_summary(summary)
+        await logger.write_summary(summary)
 
         # Print summary
         print(f"\n{'='*60}")
@@ -862,6 +892,20 @@ def main():
 
     finally:
         logger.close()
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Claude Code Orchestrator — Sandboxed Pipeline")
+    parser.add_argument("--parquet", default=None, help="Parquet file (default from config.yaml)")
+    parser.add_argument("--n", type=int, default=None, help="Max problems")
+    parser.add_argument("--id", type=str, default=None, help="Specific problem ID")
+    parser.add_argument("--K", type=int, default=None, help="Strategies per problem (default from config.yaml)")
+    parser.add_argument("--max-steps", type=int, default=None, help="Max steps per builder (default from config.yaml)")
+    parser.add_argument("--max-loops", type=int, default=None, help="Max replanning loops (default from config.yaml)")
+    parser.add_argument("--workers", type=int, default=None, help="Parallel problem concurrency (default from config.yaml)")
+    args = parser.parse_args()
+    all_cfg = load_all_configs()
+    asyncio.run(main_async(args, all_cfg))
 
 
 if __name__ == "__main__":

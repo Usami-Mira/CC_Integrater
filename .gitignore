@@ -25,3 +25,13 @@ CLAUDE.md
 .github/copilot-instructions.md
 
 blueprint-crafting.zh-CN.md
+
+# Solver output artifacts
+solution_*.json
+review_*.json
+strategies_*.json
+integral_strategies.json
+strategies.json
+review.json
+result.json
+solution.json

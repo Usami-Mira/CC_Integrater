@@ -111,19 +111,152 @@ evaluator_review:
 equivalence_judge:
   user_template: |
     你是数学等价性裁判，只回答数学等价问题。
-    
+
     判定准则：
     - 仅当 P 和 G 在所有合法定义域上恒等才为 true。
     - 不要因形式相似判 true；不要因未化简判 false。
     - 对于不定积分，检查 simplify(diff(P - G, var)) 是否为 0（而非 P-G 是否为常数）。
     - 定义域差异：例如一个包含 ln(x)、另一个包含 ln|x|，应判 false 并说明定义域不同。
     - 常见恒等式：sin^2 x + cos^2 x = 1；ln(ab) = ln a + ln b（注意定义域）；exp(ln x) = x (x>0)。
-    
+
     题目背景：{question}
     答案类型：{answer_type}
     候选答案 P: {pred}
     标准答案 G: {gold}
     数值采样线索：在定义域内均匀随机采样 {total} 个点，其中 {pass_rate} 个点满足 |P-G| < 1e-8，符号化简未能归零。
-    
+
     只输出 JSON（不要 Markdown 代码块）：
     {{"equivalent": true | false, "reason": "≤2 句中文说明（指出关键恒等式或反例）"}}
+
+# ── CC Orchestrator prompts (Claude Code --print mode) ──────────────────────
+
+cc_orchestrator:
+  planner: |
+    You are a calculus strategy generator. Given the problem below, output exactly {K} fundamentally different solving strategies as JSON.
+
+    Problem: {question}
+    Problem type: {problem_type}
+
+    Available methods:
+    - Indefinite integrals: basic formula / u-substitution / integration by parts / trig substitution / Weierstrass / partial fractions
+    - Definite integrals: above + symmetry / King's rule / Feynman trick
+
+    IMPORTANT: Your response MUST be valid JSON. No text before or after the JSON object.
+
+    The output must follow this exact structure:
+    {{"strategies": [
+      {{"strategy_id": "s1", "name": "short name", "rationale": "one sentence why", "steps_outline": ["step 1", "step 2", ...]}},
+      {{"strategy_id": "s2", "name": "...", "rationale": "...", "steps_outline": ["step 1", "step 2", ...]}}
+    ]}}
+  planner_fallback: |
+    Your previous response was not valid JSON. Please output ONLY the JSON object below, with NO text before or after.
+
+    Problem: {question}
+    Output {K} strategies as JSON with this exact structure:
+    {{"strategies": [
+      {{"strategy_id": "s1", "name": "...", "rationale": "...", "steps_outline": ["step 1", "step 2"]}}
+    ]}}
+  replan: |
+    Previous strategies failed: {failed}. Generate {K} completely different strategies.
+
+    Problem: {question}
+
+    DO NOT discuss. Output ONLY JSON:
+    {{"strategies": [
+      {{"strategy_id": "s1", "name": "...", "rationale": "...", "steps_outline": ["step1", "step2", ...]}}
+    ]}}
+  builder: |
+    Solve this calculus problem step by step. You MUST use Bash commands to call the SymPy tools.
+
+    Problem: {question}
+    Strategy: {strategy_name} — {strategy_rationale}
+    Outline:
+    {steps_outline}
+
+    Available tools (call via `python scripts/cc_sympy.py`):
+      python scripts/cc_sympy.py integrate_indef "expr" [var]
+      python scripts/cc_sympy.py integrate_def "expr" var "a" "b"
+      python scripts/cc_sympy.py differentiate "expr" [var] [n]
+      python scripts/cc_sympy.py simplify "expr"
+      python scripts/cc_sympy.py parse "expr" [var]
+      python scripts/cc_sympy.py solve "expr" [var]
+      python scripts/cc_sympy.py limit "expr" var "point" [dir]
+      python scripts/cc_sympy.py series "expr" var "point" [n]
+      python scripts/cc_sympy.py substitute "expr" "mapping"
+
+    DO NOT explain. DO NOT discuss. DO the computation step by step.
+    For indefinite integrals, verify by differentiating your result.
+
+    When done, output ONLY this JSON at the end (no text before or after):
+    {{"final_answer": "LaTeX", "final_answer_sympy": "SymPy-parseable, use log() not ln()", "steps": [
+      {{"step": 1, "action": "tool", "tool": "simplify", "args": {{"expr_str": "1/sec(x)"}}, "result": "cos(x)", "thought": "simplify integrand"}},
+      {{"step": 2, "action": "tool", "tool": "integrate_indef", "args": {{"expr_str": "cos(x)", "var": "x"}}, "result": "sin(x)", "thought": "compute integral"}}
+    ], "steps_summary": "brief description"}}
+  builder_retry: |
+    Solve this calculus problem again. Your previous attempt was rejected.
+
+    Problem: {question}
+    Strategy: {strategy_name} — {strategy_rationale}
+    Outline:
+    {steps_outline}
+
+    Previous answer: {previous_answer}
+
+    Evaluator issues:
+    {evaluator_issues}
+
+    Evaluator feedback:
+    {evaluator_feedback}
+
+    Available tools (call via `python scripts/cc_sympy.py`):
+      python scripts/cc_sympy.py integrate_indef "expr" [var]
+      python scripts/cc_sympy.py integrate_def "expr" var "a" "b"
+      python scripts/cc_sympy.py differentiate "expr" [var] [n]
+      python scripts/cc_sympy.py simplify "expr"
+      python scripts/cc_sympy.py parse "expr" [var]
+      python scripts/cc_sympy.py solve "expr" [var]
+      python scripts/cc_sympy.py limit "expr" var "point" [dir]
+      python scripts/cc_sympy.py series "expr" var "point" [n]
+      python scripts/cc_sympy.py substitute "expr" "mapping"
+
+    Try a different approach. DO NOT discuss. Output ONLY this JSON when done:
+    {{"final_answer": "LaTeX", "final_answer_sympy": "SymPy-parseable, use log() not ln()", "steps": [
+      {{"step": 1, "action": "tool", "tool": "...", "args": {{...}}, "result": "...", "thought": "..."}}
+    ], "steps_summary": "brief description"}}
+  evaluator: |
+    Review a Builder's solution attempt. The automated verifier already checked the answer.
+
+    Problem: {question}
+    Strategy: {strategy_name}
+    Builder's answer: {builder_answer}
+    Builder's process: {steps_summary}
+
+    Verifier result: {verifier_verdict} (true = correct, false = incorrect)
+
+    You can only trust this boolean. Do not second-guess it.
+
+    Output ONLY this JSON:
+    {{
+      "passed": true/false,
+      "issues": ["list problems"],
+      "feedback": "what went wrong and what to try differently",
+      "should_retry": true/false,
+      "retry_hint": "specific guidance"
+    }}
+  l5_judge: |
+    You are a mathematical equivalence judge. Determine if two expressions are mathematically equivalent.
+
+    Problem context: {question}
+    Expression P: {pred}
+    Expression G: {gold}
+
+    Note: I am NOT telling you which is the student's answer and which is the standard answer. Just determine if they are equivalent.
+
+    Rules:
+    - Only true if P and G are identical for all valid inputs in the domain
+    - For indefinite integrals, they can differ by a constant
+    - Use standard mathematical identities
+    - Consider domain differences (e.g., ln(x) vs ln|x| are NOT equivalent)
+
+    Output ONLY:
+    {{"equivalent": true/false, "reason": "brief explanation in Chinese"}}

@@ -1,13 +1,21 @@
-﻿run:
+# ── CC-Integrater Runtime Configuration ──────────────────────────────────────
+# Values here are defaults; CLI flags (e.g. --K, --workers, --parquet) override.
+
+run:
   K: 3                                  # Planner strategies per problem
   builder_max_steps: 12
-  builder_max_retries: 2
-  max_outer_loops: 3                    # Builder-Evaluator retry loops (user requirement)
+  builder_max_retries: 2                # retries per strategy (Builder ↔ Evaluator)
+  max_outer_loops: 3                    # replanning loops
   enable_replan_on_fail: true
   enable_early_stop: false
-  problem_concurrency: 8
+  problem_concurrency: 8                # parallel problems (--workers)
   builder_concurrency_per_problem: 6
   max_retries_per_strategy: 2
+  cc_timeout_planner: 180               # seconds
+  cc_timeout_planner_fallback: 120
+  cc_timeout_builder: 300
+  cc_timeout_evaluator: 120
+  cc_timeout_l5: 120
 
 rate_limits:
   max_concurrent_llm_calls: 32
@@ -16,13 +24,13 @@ rate_limits:
 data:
   column_overrides: {}                  # e.g. {question: stem_zh, gold_answer: final_answer}
   drop_metadata_columns: []
-  max_question_chars: 12000             # lenient (user feedback #2)
+  max_question_chars: 12000
+  min_question_chars: 2
+  parquet_file: question_filtered_example.parquet
 
 verifier:
   n_samples: 30
-  llm_for_unsure: true
+  llm_for_unsure: false                 # set true to enable L5 LLM arbitration
 
 paths:
-  parquet_dir: data/raw
-  log_dir: logs
-
+  log_dir: logs/cc

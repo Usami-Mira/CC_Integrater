@@ -1,16 +1,20 @@
 import re
 import sympy as sp
 
-from latex2sympy2 import latex2sympy as l2s
+try:
+    from latex2sympy2 import latex2sympy as l2s
+except ImportError:
+    l2s = None
 
 
 def parse_latex(latex: str) -> sp.Expr | None:
     """Parse LaTeX string to SymPy expression using latex2sympy2."""
     latex = re.sub(r"\s*[+\-]\s*C\b", "", latex, flags=re.IGNORECASE).strip()
-    try:
-        return l2s(latex)
-    except Exception:
-        pass
+    if l2s is not None:
+        try:
+            return l2s(latex)
+        except Exception:
+            pass
     try:
         return sp.sympify(latex, evaluate=True)
     except Exception:

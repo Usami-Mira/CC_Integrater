@@ -1,7 +1,0 @@
-{
-  "passed": true,
-  "issues": [],
-  "feedback": "Solution is correct. The builder correctly integrated the slope function 2x^2-5 to obtain the general solution 2x^3/3-5x+C, then used the point (3,2) to determine C=-1. The final answer 2x^3/3-5x-1 passes verification.",
-  "should_retry": false,
-  "retry_hint": ""
-}

@@ -1,7 +1,0 @@
-{
-  "passed": true,
-  "issues": [],
-  "feedback": "The substitution u = 1-x was applied correctly, the polynomial was expanded and integrated term by term, and the back-substitution is accurate. The verifier confirmed the answer is correct.",
-  "should_retry": false,
-  "retry_hint": ""
-}

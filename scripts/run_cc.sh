@@ -1,25 +1,24 @@
 #!/usr/bin/env bash
 # ── CC Solver: One-command calculus pipeline via Claude Code ─────────────────
-# Usage:
-#   bash scripts/run_cc.sh                              # all problems, K=3, 3 workers
+# Defaults come from configs/config.yaml. Use flags to override:
+#   bash scripts/run_cc.sh                              # use config.yaml defaults
 #   bash scripts/run_cc.sh --n 3                        # first 3 problems
-#   bash scripts/run_cc.sh --n 5 --K 2                  # first 5, K=2 strategies
-#   bash scripts/run_cc.sh --n 10 --workers 5           # 10 problems, 5 parallel workers
-#   bash scripts/run_cc.sh --id 19_26                   # single problem by ID
-#   bash scripts/run_cc.sh --parquet data/raw/xxx.parquet  # custom parquet file
+#   bash scripts/run_cc.sh --n 5 --K 2                  # first 5, K=2
+#   bash scripts/run_cc.sh --id 19_26                   # single problem
+#   bash scripts/run_cc.sh --parquet data/raw/xxx.parquet  # custom parquet
 # ─────────────────────────────────────────────────────────────────────────────
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-# Parse args
+# Parse args — defaults come from configs/config.yaml; only override if specified
 N=""
-K="3"
+K=""
 ID=""
-MAX_STEPS="12"
-MAX_LOOPS="3"
-WORKERS="3"
-PARQUET="question_filtered_example.parquet"
+MAX_STEPS=""
+MAX_LOOPS=""
+WORKERS=""
+PARQUET=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -34,14 +33,15 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Build command args
+# Build command args — only pass non-empty overrides
 EXTRA_ARGS=""
 [ -n "$N" ]        && EXTRA_ARGS="$EXTRA_ARGS --n $N"
+[ -n "$K" ]        && EXTRA_ARGS="$EXTRA_ARGS --K $K"
 [ -n "$ID" ]       && EXTRA_ARGS="$EXTRA_ARGS --id $ID"
-EXTRA_ARGS="$EXTRA_ARGS --K $K"
-EXTRA_ARGS="$EXTRA_ARGS --max-steps $MAX_STEPS"
-EXTRA_ARGS="$EXTRA_ARGS --max-loops $MAX_LOOPS"
-EXTRA_ARGS="$EXTRA_ARGS --workers $WORKERS"
+[ -n "$MAX_STEPS" ] && EXTRA_ARGS="$EXTRA_ARGS --max-steps $MAX_STEPS"
+[ -n "$MAX_LOOPS" ] && EXTRA_ARGS="$EXTRA_ARGS --max-loops $MAX_LOOPS"
+[ -n "$WORKERS" ]  && EXTRA_ARGS="$EXTRA_ARGS --workers $WORKERS"
+[ -n "$PARQUET" ]  && EXTRA_ARGS="$EXTRA_ARGS --parquet $PARQUET"
 
 echo "Running: python scripts/cc_orchestrator.py --parquet $PARQUET $EXTRA_ARGS"
 echo ""
