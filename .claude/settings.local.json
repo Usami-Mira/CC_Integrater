@@ -1,0 +1,15 @@
+{
+  "env": {
+    "ANTHROPIC_AUTH_TOKEN": "sk-8522a2ac103440e0b57f5cf1c9ef6ff2",
+    "ANTHROPIC_BASE_URL": "https://dashscope.aliyuncs.com/apps/anthropic",
+    "ANTHROPIC_MODEL": "glm-5.1"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(pip list *)",
+      "Bash(pip install *)",
+      "Bash(python run.py)",
+      "Bash(python *)"
+    ]
+  }
+}
