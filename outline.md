@@ -9,20 +9,31 @@
 2. 从 outline.md 的 `## Architecture` 部分了解执行顺序、数据流和反馈规则
 3. 从 outline.md 的 `## Agent: <name>` 部分提取对应 Agent 的 prompt
 4. 读取指定 workspace 中的 problem.md 了解题目内容
-5. 按 Architecture 定义的顺序，用 spawn_agent 工具逐个创建 sub-Agent
-6. 每次调用 spawn_agent 时：
-   - `prompt`: 从 outline.md 对应 Agent 章节提取的完整 prompt
-   - `task`: 明确告诉 Agent 要读哪些文件、输出到哪个文件、工作目录是哪里
-7. 监控每个 Agent 的返回结果
-8. 全部阶段完成后，检查 Evaluator 的输出文件：
-   - 包含 "PASS" → 输出最终解题总结，结束
+5. 按 Architecture 定义的顺序，用 Bash 调用 spawn.py 逐个创建 sub-Agent：
+   ```
+   python3 spawn.py <role> <workspace> <prompt_file> <task_file>
+   ```
+   - `<role>`: Agent 角色名（Planner / Builder / Evaluator）
+   - `<workspace>`: 工作目录路径
+   - `<prompt_file>`: 临时文件，先写入从 outline.md 提取的 Agent prompt
+   - `<task_file>`: 临时文件，先写入任务描述（要读什么文件、输出到什么文件）
+   - spawn.py 会创建一个 Claude Code 子进程，完成后将结果写入 `<workspace>/.<role>.result`
+6. 记录每个 sub-Agent 的调用轮次、用时和结果
+7. 全部阶段完成后，检查 Evaluator 的输出文件：
+   - 包含 "PASS" → 将解题结果按合理格式写入 {workspace}/final_summary.md，结束
    - 包含 "REVISE" → 按 Architecture 反馈规则重新执行相关 Agent，最多迭代 2 次
-9. 迭代时，将审查意见作为额外上下文加入 Builder 的 task 描述
+8. 迭代时，将审查意见作为额外上下文加入 Builder 的 task 描述
+9. 第二次迭代仍 REVISE → 将当前最佳方案和未解决问题列表写入 {workspace}/final_summary.md，结束
+
+**输出格式：** 在 final_summary.md 中，请包含以下信息：
+- 各阶段的执行统计：读每个 `.{role}.metrics` 文件（JSON），提取 duration_ms、usage 中的 tokens，汇总轮次、总用时、总 Token 消耗
+- 最终答案的完整呈现
+- 格式清晰、易读
 
 **原则：**
 - 你自己不做具体的物理解题——所有分析、求解、审查都委托给 sub-Agent
 - 你只负责编排：读配置、分配任务、传递上下文、判断是否迭代
-- 每个 sub-Agent 是独立的一次性对话，完成后返回结果文本
+- 每个 sub-Agent 是独立的 Claude Code 进程，完成后返回结果文本
 
 
 ## Agent: Planner
@@ -130,7 +141,7 @@ Orchestrator
   │     读 problem.md + {workspace}/solution.md → 写 {workspace}/review.md
   │
   └─→ 检查 review.md
-        PASS → 输出总结，结束
+        PASS → 写 {workspace}/final_summary.md，结束
         REVISE → 迭代（见下方反馈规则）
 ```
 
@@ -140,7 +151,7 @@ Orchestrator
   2. Builder 修正后写 {workspace}/solution.md
   3. Orchestrator spawn Evaluator 重新审查
   4. 最多迭代 **2** 次
-- 第二次迭代仍 REVISE → Orchestrator 输出当前最佳方案和未解决问题列表，结束
+- 第二次迭代仍 REVISE → 将当前最佳方案和未解决问题列表写入 {workspace}/final_summary.md，结束
 
 
 ## Format

@@ -1,0 +1,4 @@
+{
+  "model": "qwen3.6-plus",
+  "timeout_seconds": 600
+}
