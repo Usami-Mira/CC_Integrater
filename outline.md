@@ -8,8 +8,11 @@
 1. 用 read_file 读取项目根目录的 outline.md，理解完整的工作流架构和各 Agent 定义
 2. 从 outline.md 的 `## Architecture` 部分了解执行顺序、数据流和反馈规则
 3. 从 outline.md 的 `## Agent: <name>` 部分提取对应 Agent 的 prompt
-4. 读取指定 workspace 中的 problem.md 了解题目内容
-5. 按 Architecture 定义的顺序，用 Bash 调用 spawn.py 逐个创建 sub-Agent：
+4. **自动识别输入结构**：
+   - 如果指定目录下存在若干子文件夹，每个子文件夹内含 problem.md → 视为多题目录，依次串行处理每个子文件夹
+   - 否则 → 视为单题目录，读取该目录下 problem.md 作为唯一题目
+   - 多题场景下，每道题独立执行步骤 5-9，全部完成后在**父目录**生成 `batch_summary.md` 汇总所有子题目结果
+5. 对每一道题，按 Architecture 定义的顺序，用 Bash 调用 spawn.py 逐个创建 sub-Agent：
    ```
    python3 spawn.py <role> <workspace> <prompt_file> <task_file>
    ```
@@ -25,10 +28,12 @@
 8. 迭代时，将审查意见作为额外上下文加入 Builder 的 task 描述
 9. 第二次迭代仍 REVISE → 将当前最佳方案和未解决问题列表写入 {workspace}/final_summary.md，结束
 
-**输出格式：** 在 final_summary.md 中，请包含以下信息：
-- 各阶段的执行统计：读每个 `.{role}.metrics` 文件（JSON），提取 duration_ms、usage 中的 tokens，汇总轮次、总用时、总 Token 消耗
-- 最终答案的完整呈现
-- 格式清晰、易读
+**输出格式：**
+- **单题**：在 final_summary.md 中，请包含以下信息：
+  - 各阶段的执行统计：读每个 `.{role}.metrics` 文件（JSON），提取 duration_ms、usage 中的 tokens，汇总轮次、总用时、总 Token 消耗
+  - 最终答案的完整呈现
+  - 格式清晰、易读
+- **多题**：在父目录生成 `batch_summary.md`，包含每道题的子目录名、是否 PASS、最终答案摘要、轮次和用时。
 
 **原则：**
 - 你自己不做具体的物理解题——所有分析、求解、审查都委托给 sub-Agent
