@@ -1,0 +1,5 @@
+problems/
+*.metrics
+*.result
+final_summary.md
+.claude/
