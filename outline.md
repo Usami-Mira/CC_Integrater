@@ -9,9 +9,14 @@
 2. 从 outline.md 的 `## Architecture` 部分了解执行顺序、数据流和反馈规则
 3. 从 outline.md 的 `## Agent: <name>` 部分提取对应 Agent 的 prompt
 4. **自动识别输入结构**：
-   - 如果指定目录下存在若干子文件夹，每个子文件夹内含 problem.md → 视为多题目录，依次串行处理每个子文件夹
+   - 如果指定目录下存在若干子文件夹，每个子文件夹内含 problem.md → 视为多题目录
    - 否则 → 视为单题目录，读取该目录下 problem.md 作为唯一题目
-   - 多题场景下，每道题独立执行步骤 5-9，全部完成后在**父目录**生成 `batch_summary.md` 汇总所有子题目结果
+   - 多题场景下，读取 `config.json` 中的 `max_concurrent_problems` 值，采用滑动窗口并行处理：
+     - 初始同时启动 `max_concurrent_problems` 道题，每道题各自独立执行步骤 5-9
+     - 任意一道题完成后（包括断点续传跳过已做阶段的场景），立即从剩余待处理队列中取下一道题启动
+     - 批内各题的每个阶段独立推进，互不等待。例如：题目 A 可能在跑 Builder 时，题目 B 还在 Planner，题目 C 刚启动
+     - 用 Bash 后台运行（`&` + `wait`）管理并发：每个题目作为一组后台任务独立循环推进，同时运行的题目总数不超过 `max_concurrent_problems`
+     - 全部完成后在**父目录**生成 `batch_summary.md` 汇总所有子题目结果
 5. 对每一道题，先读取 `{workspace}/.state` 文件（不存在则视为 `planner`），根据记录的阶段从对应 Agent 开始，用 Bash 调用 spawn.py 逐个创建 sub-Agent：
    ```
    python3 spawn.py <role> <workspace> <prompt_file> <task_file>

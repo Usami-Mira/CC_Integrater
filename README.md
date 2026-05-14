@@ -51,7 +51,8 @@ problems/
 ```json
 {
   "model": "qwen3.6-plus",
-  "timeout_seconds": 86400
+  "timeout_seconds": 86400,
+  "max_concurrent_problems": 3
 }
 ```
 
@@ -59,6 +60,7 @@ problems/
 |------|------|
 | `model` | 使用的模型名，由 Claude Code CLI 的 `--model` 参数传递 |
 | `timeout_seconds` | 单次调用的最大超时时间（秒），默认 86400（24 小时） |
+| `max_concurrent_problems` | 多题场景下同时并行处理的最大题目数，默认 3。设为 1 则串行处理 |
 
 ## 运行
 
@@ -128,6 +130,18 @@ python3 run.py problems/example_multiple
 
 ```
 Orchestrator
+  │
+  ├── 滑动窗口并行（最多 max_concurrent_problems 题同时运行）
+  │   初始启动 3 题，任一题完成后立即从队列补入下一题
+  │   例：1,2,3 同时跑 → 1 完成 → 4 补入 → 2,3,4 同时跑 → 3 完成 → 5 补入 → 2,4,5 同时跑 → ...
+  │
+  └── 全部完成后生成 batch_summary.md
+```
+
+单道题内的阶段顺序：
+
+```
+题目 X
   ├── spawn Planner   → plan.md
   ├── spawn Builder   → solution.md
   ├── spawn Evaluator → review.md
