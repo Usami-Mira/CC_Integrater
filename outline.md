@@ -1,4 +1,4 @@
-# Outline — 多Agent协作数学积分求解系统
+# Outline — 多Agent协作的数学积分求解系统
 
 ## System: Orchestrator
 
