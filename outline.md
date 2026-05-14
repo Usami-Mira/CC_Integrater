@@ -12,7 +12,7 @@
    - 如果指定目录下存在若干子文件夹，每个子文件夹内含 problem.md → 视为多题目录，依次串行处理每个子文件夹
    - 否则 → 视为单题目录，读取该目录下 problem.md 作为唯一题目
    - 多题场景下，每道题独立执行步骤 5-9，全部完成后在**父目录**生成 `batch_summary.md` 汇总所有子题目结果
-5. 对每一道题，按 Architecture 定义的顺序，用 Bash 调用 spawn.py 逐个创建 sub-Agent：
+5. 对每一道题，先读取 `{workspace}/.state` 文件（不存在则视为 `planner`），根据记录的阶段从对应 Agent 开始，用 Bash 调用 spawn.py 逐个创建 sub-Agent：
    ```
    python3 spawn.py <role> <workspace> <prompt_file> <task_file>
    ```
@@ -23,10 +23,26 @@
    - spawn.py 会创建一个 Claude Code 子进程，完成后将结果写入 `<workspace>/.<role>.result`
 6. 记录每个 sub-Agent 的调用轮次、用时和结果
 7. 全部阶段完成后，检查 Evaluator 的输出文件：
-   - 包含 "PASS" → 将解题结果按合理格式写入 {workspace}/final_summary.md，结束
-   - 包含 "REVISE" → 按 Architecture 反馈规则重新执行相关 Agent，最多迭代 2 次
+   - 包含 "PASS" → 写 `.state` 为 `done`，将解题结果按合理格式写入 {workspace}/final_summary.md，结束
+   - 包含 "REVISE" → 按 Architecture 反馈规则和断点续传规则重新执行相关 Agent，最多迭代 2 次
 8. 迭代时，将审查意见作为额外上下文加入 Builder 的 task 描述
 9. 第二次迭代仍 REVISE → 将当前最佳方案和未解决问题列表写入 {workspace}/final_summary.md，结束
+
+**断点续传规则：**
+每道题目录中维护一个 `{workspace}/.state` 文件，仅存一行文本，取值为 `planner` / `builder` / `evaluator` / `done`，表示下一个应执行的 Agent。
+- 初始状态（无 `.state` 文件）：从 `planner` 开始
+- 每次 spawn 一个 Agent 并**成功完成**后，立即将 `.state` 更新为下一个阶段
+- 启动每道题的处理流程时，先读取 `.state` 文件，从记录的阶段开始继续执行
+- `.state` 为 `done` 或存在 `{workspace}/final_summary.md` → 该题已完成，跳过
+
+Agent 完成后状态更新规则：
+- Planner 完成 → 写 `.state` 为 `builder`
+- Builder 完成 → 写 `.state` 为 `evaluator`
+- Evaluator 完成且结果为 PASS → 写 `.state` 为 `done`
+- Evaluator 完成且结果为 REVISE（且迭代次数 < 2）→ 写 `.state` 为 `builder`（重新执行 Builder，task 中附带审查意见）
+- 第二次迭代仍 REVISE → 写 `.state` 为 `done`
+
+注意：每次启动某个 Agent 前才检查 `.state`，不要预先更新。Agent 失败（如 spawn.py 报错）时不更新状态，以便下次从该阶段重试。
 
 **输出格式：**
 - **单题**：在 final_summary.md 中，请包含以下信息：
