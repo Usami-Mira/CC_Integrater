@@ -1,0 +1,5 @@
+{
+  "model": "qwen3.6-plus",
+  "timeout_seconds": 86400,
+  "max_concurrent_problems": 3
+}
