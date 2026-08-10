@@ -2,7 +2,7 @@
 """Helper script — spawn a sub-Agent via Claude Code CLI.
 Called by the Orchestrator through Bash tool use.
 
-Usage: spawn.py <role> <workspace> <prompt_file> <task_file> [--tools Read,Write]
+Usage: spawn.py <role> <workspace> <prompt_file> <task_file> [--tools Read,Write,Edit,Bash]
 """
 
 import sys, os, json, subprocess
@@ -15,7 +15,7 @@ TIMEOUT = CONFIG.get("timeout_seconds", 600)
 
 def main():
     if len(sys.argv) < 5:
-        print("Usage: spawn.py <role> <workspace> <prompt_file> <task_file> [--tools Read,Write]")
+        print("Usage: spawn.py <role> <workspace> <prompt_file> <task_file> [--tools Read,Write,Edit,Bash]")
         sys.exit(1)
 
     role = sys.argv[1]
@@ -24,7 +24,7 @@ def main():
     task_file = sys.argv[4]
 
     # Parse optional --tools
-    allowed_tools = "Read,Write"
+    allowed_tools = "Read,Write,Edit,Bash"
     for i, arg in enumerate(sys.argv):
         if arg == "--tools" and i + 1 < len(sys.argv):
             allowed_tools = sys.argv[i + 1]

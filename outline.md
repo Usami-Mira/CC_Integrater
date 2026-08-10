@@ -17,7 +17,7 @@
      - 批内各题的每个阶段独立推进，互不等待。例如：题目 A 可能在跑 Builder 时，题目 B 还在 Planner，题目 C 刚启动
      - 用 Bash 后台运行（`&` + `wait`）管理并发：每个题目作为一组后台任务独立循环推进，同时运行的题目总数不超过 `max_concurrent_problems`
      - 全部完成后在**父目录**生成 `batch_summary.md` 汇总所有子题目结果
-5. 对每一道题，先读取 `{workspace}/.state` 文件（不存在则视为 `planner`），根据记录的阶段从对应 Agent 开始，用 Bash 调用 spawn.py 逐个创建 sub-Agent：
+5. 对每一道题，先用 Bash 预创建三个空文件（`plan.md`、`solution.md`、`review.md`），sub-Agent 只需用 Write 或 Edit 向对应文件写入/修改内容。然后根据 `{workspace}/.state` 文件（不存在则视为 `planner`），从记录的阶段开始，用 Bash 调用 spawn.py 逐个创建 sub-Agent：
    ```
    python3 spawn.py <role> <workspace> <prompt_file> <task_file>
    ```
@@ -69,6 +69,10 @@ Agent 完成后状态更新规则：
 **输入：** 用 read_file 读取 task 中指定的文件（problem.md，可能还有前置输出）。
 **输出：** 用 write_file 将解题计划写入 task 中指定的输出文件。
 
+**可用工具：**
+- **Edit**：如需修改已写入的解题计划内容，用 Edit 原地修改。
+- **约束**：你只能在 `{workspace}` 目录内工作，不能读写或修改该目录之外的任何文件。
+
 **解题计划应包含：**
 
 ### 物理情景
@@ -100,6 +104,12 @@ Agent 完成后状态更新规则：
 
 **输入：** 用 read_file 读取 task 中指定的文件（problem.md + plan.md）。
 **输出：** 用 write_file 将求解过程写入 task 中指定的输出文件。
+
+**可用工具：**
+- **Edit**：如果发现之前的推导有错，用 Edit 直接修改出错处的内容，不要在末尾追加"修正说明"。
+- **Bash**：可以用 Python 做数值计算、代数推导验证等。例如 `python3 -c "import numpy as np; ..."` 来求解方程、验证数值结果。
+- **约束**：你只能在 `{workspace}` 目录内工作，不能读写或修改该目录之外的任何文件，不能执行安装软件包、网络连接等非计算相关的命令。
+
 **可选技能：** 你可以在推导过程中运用 outline.md 中定义的 Skills（如 calculation、dimension_check），不需要调用外部工具——凭自身能力按 Skill 描述执行即可。
 
 **求解过程应包含：**
@@ -113,16 +123,10 @@ Agent 完成后状态更新规则：
 
 - 代数推导完整，不跳步
 - 每个数值结果带单位和有效数字
-- 关键步骤后穿插量纲检查
 
 ### 最终答案
 - 醒目标注，带完整单位
 - 对应题目要求的每个小问逐一回答
-
-### 合理性检验
-- 数量级是否合理（与常识对比）
-- 方向是否正确
-- 极端参数退化是否合理（如 μ→0, θ→0 等）
 
 如果 task 中包含审查反馈（REVISE 上下文），请先根据反馈定位问题，再修正推导。
 
@@ -133,6 +137,12 @@ Agent 完成后状态更新规则：
 
 **输入：** 用 read_file 读取 task 中指定的文件（problem.md + solution.md，可能还有 plan.md）。
 **输出：** 用 write_file 将审查结果写入 task 中指定的输出文件。
+
+**独立性原则：** 你应当从零开始独立验证每一步推导。不要依赖 solution.md 中 Builder 自带的任何自查结论——量纲、数量级、合理性等都必须由你重新核验。
+
+**可用工具：**
+- **Bash**：可以用 Python 做独立数值验证，如重新计算关键步骤、量纲检查等。
+- **约束**：你只能在 `{workspace}` 目录内工作，不能读写或修改该目录之外的任何文件，不能修改 `solution.md` 和 `plan.md`（只读）。
 
 **审查清单：**
 1. **题意覆盖** — 是否遗漏已知条件？是否误解题意？是否回答了所有小问？
@@ -157,14 +167,18 @@ Agent 完成后状态更新规则：
 ```
 Orchestrator
   │
+  ├─→ 预创建空文件：plan.md, solution.md, review.md
+  │
   ├─→ spawn Planner
-  │     读 problem.md → 写 {workspace}/plan.md
+  │     读 problem.md → 写/改 {workspace}/plan.md
   │
   ├─→ spawn Builder
-  │     读 problem.md + {workspace}/plan.md → 写 {workspace}/solution.md
+  │     读 problem.md + plan.md → 写/改 {workspace}/solution.md
+  │     (可用 Bash 运行 Python 辅助计算)
   │
   ├─→ spawn Evaluator
-  │     读 problem.md + {workspace}/solution.md → 写 {workspace}/review.md
+  │     读 problem.md + solution.md → 写 {workspace}/review.md
+  │     (可用 Bash 运行 Python 独立验证)
   │
   └─→ 检查 review.md
         PASS → 写 {workspace}/final_summary.md，结束
@@ -226,9 +240,6 @@ Step 2: ...
 ## 最终答案
 1. [小问1]: ... = ... (单位)
 2. [小问2]: ...
-
-## 合理性检验
-[数量级/方向/极端情况验证]
 ```
 
 ### review.md
@@ -251,7 +262,8 @@ REVISE
 
 ## Skills
 
-Skills 是 Agent 可调用的问题解决能力，由模型自身执行（无外部脚本）。
+Skills 是 Agent 可调用的问题解决能力。
+Agent 可以凭自身能力执行，也可以调用 Bash 运行 Python 脚本辅助计算。
 Orchestrator 在 spawn Agent 时会将 Agent prompt 中引用的 Skill 内容一并传入。
 新增 Skill 只需在本节添加定义，并在对应 Agent prompt 中声明引用。
 
