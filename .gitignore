@@ -1,4 +1,45 @@
+# 题目输出和中间结果
 problems/
+pipeline_v3/
 *.metrics
 *.result
 final_summary.md
+
+# === textbook/ 内的数据文件（不跟踪） ===
+
+# 原始 PDF
+textbook/*.pdf
+
+# OCR 输出（MinerU）
+textbook/em_output/
+textbook/mec_output/
+textbook/opt_output/
+textbook/thrm_output/
+textbook/fix_output/
+
+# 合并后的 Markdown 和图片
+textbook/merged/*.md
+textbook/merged/images/
+textbook/merged/chunks.json
+textbook/merged/chunks_translated.json
+textbook/merged/translation_cache/
+
+# 图片上下文数据
+textbook/image_context.json
+
+# 嵌入模型（~419MB）
+textbook/models/
+
+# Python 虚拟环境（~5GB）
+textbook/rag_env/
+
+# Weaviate 本地数据
+textbook/.local/
+
+# Python 缓存
+__pycache__/
+*.pyc
+
+# 杂项
+*:Zone.Identifier
+*.log

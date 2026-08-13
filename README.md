@@ -104,10 +104,19 @@ python3 run.py problems/example_multiple
 
 ```
 .
-├── outline.md          # 工作流定义：Orchestrator 指令、各 Agent prompt、文件格式规范、Skills
-├── config.json         # 项目配置（模型名、超时时间）
-├── run.py              # 入口脚本：创建 Orchestrator Agent 并启动
+├── config.json         # 项目配置（模型名、超时时间、并行数）
+├── run.py              # 入口脚本：组装 Orchestrator prompt 并启动
 ├── spawn.py            # 子进程辅助脚本：由 Orchestrator 调用，创建 Planner/Builder/Evaluator
+├── prompts/            # Agent 定义和 Skill 定义
+│   ├── orchestrator.md # Orchestrator system prompt（含模板变量，由 run.py 填充）
+│   ├── planner.md      # Planner system prompt
+│   ├── builder.md      # Builder system prompt
+│   ├── evaluator.md    # Evaluator system prompt
+│   ├── architecture.md # 执行顺序和反馈规则
+│   └── skills/         # Skill 定义
+│       ├── calculation.md
+│       ├── dimension_check.md
+│       └── knowledge_base.md
 ├── problems/           # 题目目录
 │   └── <exam>/
 │       ├── <n>/
@@ -119,6 +128,15 @@ python3 run.py problems/example_multiple
 │       │   ├── .state          # 断点状态
 │       │   └── .*.result / .*metrics  # 内部缓存
 │       └── ...
+├── textbook/           # 教科书 RAG 知识库（详见下方）
+│   ├── batch_parse.py          # 分卷合并
+│   ├── fix_formulas.py         # OCR 公式修正
+│   ├── extract_image_context.py # 图片上下文提取
+│   ├── rag_build/              # RAG 构建脚本
+│   │   ├── chunk_markdown.py   # 文本分块
+│   │   ├── translate_chunks.py # 中文→英文翻译
+│   │   └── embed_bge.py       # 向量嵌入 + Weaviate 存储
+│   └── weaviate_data/          # Weaviate 向量数据库（61MB，可直接使用）
 └── README.md
 ```
 
@@ -158,4 +176,35 @@ Orchestrator
 
 ### Agent 定义
 
-所有 Agent 的 system prompt 和文件格式规范统一定义在 `outline.md` 中。新增角色或修改解题逻辑只需编辑该文件。新增 Skill（如数值计算、量纲检查）在文件末尾的 `## Skills` 部分添加定义即可。
+各 Agent 的 system prompt 分别定义在 `prompts/` 目录下的独立 `.md` 文件中。`run.py` 启动时读取所有文件并组装成完整的 Orchestrator prompt（含嵌入的 sub-Agent prompt 和 Skill 定义）。新增角色只需在 `prompts/` 下添加 `.md` 文件并更新 `run.py` 的组装逻辑。新增 Skill 只需在 `prompts/skills/` 下添加 `.md` 文件，并在对应 Agent prompt 中声明引用。
+
+---
+
+## 教科书 RAG 知识库
+
+`textbook/` 目录包含从 4 本高中物理竞赛教科书（电磁学、力学、光学、热学）PDF 扫描件构建的 RAG 知识库，为解题 Agent 提供物理知识检索能力。
+
+### 构建流程
+
+| 步骤 | 脚本 | 说明 |
+|------|------|------|
+| 1. OCR | MinerU Web API | PDF → 结构化 Markdown + 图片 |
+| 2. 公式修正 | `fix_formulas.py` | LLM 纠正 OCR 公式错误 |
+| 3. 图片上下文 | `extract_image_context.py` | 提取图文关联 |
+| 4. 合并分卷 | `batch_parse.py` | 多 part → 单文件 Markdown |
+| 5. 文本分块 | `rag_build/chunk_markdown.py` | 按章节切分为 1139 个语义块 |
+| 6. 翻译 | `rag_build/translate_chunks.py` | Qwen 3.6 Flash 中英双语（20 并发） |
+| 7. 向量嵌入 | `rag_build/embed_bge.py` | BGE-base-en-v1.5 → Weaviate |
+
+### 技术选型
+
+| 组件 | 选型 | 理由 |
+|------|------|------|
+| OCR | MinerU Web API | 结构化输出，支持公式和图片 |
+| 翻译 | Qwen 3.6 Flash | 快速、物理术语准确 |
+| 嵌入模型 | BGE-base-en-v1.5 | 768维，语义检索效果好 |
+| 向量数据库 | Weaviate Embedded | 无需 Docker，本地持久化 |
+
+### 数据说明
+
+原始 PDF、OCR 输出、合并后的 Markdown、图片和嵌入模型文件均通过 `.gitignore` 排除，不纳入版本管理。构建好的 Weaviate 数据库（`weaviate_data/`，61MB）直接包含在仓库中，clone 后即可使用。如需从头重建知识库，按上表步骤依次运行即可。
