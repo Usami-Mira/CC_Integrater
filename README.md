@@ -72,6 +72,18 @@ python3 run.py problems/example_single
 python3 run.py problems/example_multiple
 ```
 
+## 运行测试
+
+```bash
+# 运行所有单元测试
+python3 textbook/run_tests.py
+
+# 或运行单个测试文件
+python3 textbook/test_smart_chunk.py -v
+```
+
+测试覆盖文本处理管道的核心逻辑：智能分块、段落边界检测、token 估算等。
+
 ## 查看结果
 
 每道题的子文件夹中，用户需要关注的文件：

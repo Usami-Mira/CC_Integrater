@@ -72,7 +72,7 @@ def main():
         shutil.copy2(str(query_script), os.path.join(workspace, "query_rag.py"))
 
     # Set env vars so query_rag.py knows where model and data are
-    os.environ["RAG_MODEL_DIR"] = str(ROOT / "textbook" / "models" / "bge-base-en-v1.5")
+    os.environ["RAG_MODEL_DIR"] = str(ROOT / "textbook" / "models" / "bge-m3")
     os.environ["RAG_DATA_DIR"] = str(ROOT / "textbook" / "weaviate_data")
 
     orchestrator_prompt = assemble_orchestrator_prompt()
