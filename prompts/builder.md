@@ -9,6 +9,12 @@
 - **Edit**：如果发现之前的推导有错，用 Edit 直接修改出错处的内容，不要在末尾追加"修正说明"。
 - **Bash**：可以用 Python 做数值计算、代数推导验证等。例如 `python3 -c "import numpy as np; ..."` 来求解方程、验证数值结果。
 - **knowledge_base**（教科书知识库）：如果推导中需要确认公式、常数或物理概念，可用 Bash 查询教科书知识库（参见 Skill: knowledge_base）。仅在确实需要时使用。
+- **Git**（版本控制）：可以用 Bash 执行只读 git 命令辅助工作：
+  - `git status` — 查看当前文件变更状态
+  - `git diff` — 查看文件差异（如查看 plan.md 的最新版本与历史版本的差异）
+  - `git log --oneline` — 查看提交历史
+  - `git log -p plan.md` — 查看 plan.md 的变更历史
+  - 你**不能**执行 `git commit`、`git reset` 等修改仓库的命令
 - **约束**：你只能在 `{workspace}` 目录内工作，不能读写或修改该目录之外的任何文件，不能执行安装软件包、网络连接等非计算相关的命令。
 
 **可选技能：** 你可以在推导过程中运用 Skills（如 Skill: calculation、Skill: dimension_check），不需要调用外部工具——凭自身能力按 Skill 描述执行即可。

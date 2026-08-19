@@ -15,6 +15,45 @@ CONFIG = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
 MODEL = CONFIG.get("model", "sonnet")
 TIMEOUT = CONFIG.get("timeout_seconds", 600)
 
+# Per-agent permission profiles
+# Format: Claude Code --allowed-tools values
+# Bash(pattern) restricts Bash to commands matching the pattern
+AGENT_PROFILES = {
+    "Planner": (
+        "Read,"
+        "Write,"
+        "Edit,"
+        "Bash(python3 *),"
+        "Bash(source * && python3 *),"
+        "Bash(git status*),"
+        "Bash(git diff*),"
+        "Bash(git log*),"
+        "Bash(git add *)"
+    ),
+    "Builder": (
+        "Read,"
+        "Write,"
+        "Edit,"
+        "Bash(python3 *),"
+        "Bash(source * && python3 *),"
+        "Bash(git status*),"
+        "Bash(git diff*),"
+        "Bash(git log*),"
+        "Bash(git add *)"
+    ),
+    "Evaluator": (
+        "Read,"
+        "Write,"
+        "Edit,"
+        "Bash(python3 *),"
+        "Bash(source * && python3 *),"
+        "Bash(git status*),"
+        "Bash(git diff*),"
+        "Bash(git log*),"
+        "Bash(git add *)"
+    ),
+}
+
 
 def main():
     if len(sys.argv) < 5:
@@ -26,8 +65,10 @@ def main():
     prompt_file = sys.argv[3]
     task_file = sys.argv[4]
 
-    # Parse optional --tools
-    allowed_tools = "Read,Write,Edit,Bash"
+    # Determine allowed tools: CLI override > profile > generic default
+    allowed_tools = "Read,Write,Edit,Bash"  # fallback default
+    if role in AGENT_PROFILES:
+        allowed_tools = AGENT_PROFILES[role]
     for i, arg in enumerate(sys.argv):
         if arg == "--tools" and i + 1 < len(sys.argv):
             allowed_tools = sys.argv[i + 1]

@@ -8,6 +8,11 @@
 **可用工具：**
 - **Edit**：如需修改已写入的解题计划内容，用 Edit 原地修改。
 - **knowledge_base**（教科书知识库）：如果题目涉及的物理概念或定律不确定，可用 Bash 查询教科书知识库（参见 Skill: knowledge_base）。仅在确实需要时使用。
+- **Git**（版本控制）：可以用 Bash 执行只读 git 命令查看工作区状态：
+  - `git status` — 查看当前文件变更状态
+  - `git diff` — 查看文件差异
+  - `git log --oneline` — 查看提交历史
+  - 你**不能**执行 `git commit`、`git reset` 等修改仓库的命令
 - **约束**：你只能在 `{workspace}` 目录内工作，不能读写或修改该目录之外的任何文件。
 
 ## 公式书写规范

@@ -2,7 +2,7 @@
 
 ## 简介
 
-本项目通过 Claude Code CLI 编排三个 Agent（Planner / Builder / Evaluator）自动解决物理题目。Planner 分析题目并制定解题计划，Builder 执行完整推导求解，Evaluator 审查结果并反馈。若审查未通过，系统自动将 Builder 的结果送回修正，最多迭代 2 次。每道题支持断点续传，中断后可自动从上次进度继续。
+本项目通过 Claude Code CLI 编排三个 Agent（Planner / Builder / Evaluator）自动解决物理题目。Planner 分析题目并制定解题计划，Builder 执行完整推导求解，Evaluator 审查结果并反馈。若审查未通过，系统自动将 Builder 的结果送回修正，最多迭代 2 次。每道题支持断点续传，中断后可自动从上次进度继续。系统使用 Git 自动追踪解题过程的完整演变，支持查看每个阶段的变更历史和版本对比。
 
 ## 环境安装
 
@@ -13,6 +13,28 @@
 ```bash
 npm install -g @anthropic-ai/claude-code
 ```
+
+### 安装 Git
+
+系统使用 Git 进行版本控制和解题过程追踪：
+
+```bash
+# Ubuntu/Debian
+sudo apt-get install git
+
+# macOS
+brew install git
+
+# Windows
+# 下载 Git for Windows: https://git-scm.com/download/win
+```
+
+验证安装：
+```bash
+git --version
+```
+
+**注意**：Git 用于追踪每道题的解题过程演变（plan → solution → review），支持自动提交和迭代历史查看。
 
 ### 配置 API Key（按量计费模式）
 
@@ -75,14 +97,20 @@ python3 run.py problems/example_multiple
 ## 运行测试
 
 ```bash
-# 运行所有单元测试
+# 运行 Git 集成测试（权限配置、Git 初始化等）
+python3 test_git_integration.py -v
+
+# 运行文本处理管道测试（分块、token 估算等）
 python3 textbook/run_tests.py
 
 # 或运行单个测试文件
 python3 textbook/test_smart_chunk.py -v
 ```
 
-测试覆盖文本处理管道的核心逻辑：智能分块、段落边界检测、token 估算等。
+测试覆盖：
+- Git 版本控制初始化和权限配置
+- 文本处理管道的核心逻辑：智能分块、段落边界检测、token 估算
+- MCP 服务器和知识库查询
 
 ## 查看结果
 
@@ -96,6 +124,32 @@ python3 textbook/test_smart_chunk.py -v
 | `final_summary.md` | 最终汇总：执行统计 + 完整答案（**主要阅读文件**） |
 
 多题场景下，父目录还会生成 `batch_summary.md`，汇总所有子题的状态和答案摘要。
+
+### 查看解题过程历史
+
+每道题的工作目录都是一个 Git 仓库，可以查看解题过程的完整演变：
+
+```bash
+cd problems/example_single
+
+# 查看提交历史
+git log --oneline
+
+# 典型输出：
+# a1b2c3d final: summary
+# e4f5g6h review: v2 revised
+# i7j8k9l solution: v2 revised
+# m0n1o2p review: v1 complete
+# q3r4s5t solution: v1 complete
+# t9u0v1w plan: v1 complete
+# x2y3z4a init: create output files
+
+# 查看 solution.md 的变更历史
+git log -p solution.md
+
+# 对比 v1 和 v2 的差异（如果有 REVISE）
+git diff HEAD~2 solution.md
+```
 
 以下以 `.` 开头的文件是系统内部使用的状态和缓存文件，一般不需要手动查看：
 
@@ -116,39 +170,46 @@ python3 textbook/test_smart_chunk.py -v
 
 ```
 .
-├── config.json         # 项目配置（模型名、超时时间、并行数）
-├── run.py              # 入口脚本：组装 Orchestrator prompt 并启动
-├── spawn.py            # 子进程辅助脚本：由 Orchestrator 调用，创建 Planner/Builder/Evaluator
-├── prompts/            # Agent 定义和 Skill 定义
-│   ├── orchestrator.md # Orchestrator system prompt（含模板变量，由 run.py 填充）
-│   ├── planner.md      # Planner system prompt
-│   ├── builder.md      # Builder system prompt
-│   ├── evaluator.md    # Evaluator system prompt
-│   ├── architecture.md # 执行顺序和反馈规则
-│   └── skills/         # Skill 定义
+├── config.json              # 项目配置（模型名、超时时间、并行数）
+├── run.py                   # 入口脚本：组装 Orchestrator prompt 并启动
+├── spawn.py                 # 子进程辅助脚本：创建 Planner/Builder/Evaluator，含权限配置
+├── CLAUDE.md                # Claude Code 项目配置
+├── PROJECT_STRUCTURE.md     # 详细项目结构和开发指南
+├── test_git_integration.py  # Git 集成单元测试
+├── prompts/                 # Agent 定义和 Skill 定义
+│   ├── orchestrator.md      # Orchestrator system prompt（含 Git 工作流）
+│   ├── planner.md           # Planner system prompt
+│   ├── builder.md           # Builder system prompt
+│   ├── evaluator.md         # Evaluator system prompt
+│   ├── architecture.md      # 执行顺序和反馈规则
+│   └── skills/              # Skill 定义
 │       ├── calculation.md
 │       ├── dimension_check.md
 │       └── knowledge_base.md
-├── problems/           # 题目目录
+├── problems/                # 题目目录
 │   └── <exam>/
 │       ├── <n>/
-│       │   ├── problem.md      # 输入：题目
-│       │   ├── plan.md         # Planner 输出
-│       │   ├── solution.md     # Builder 输出
-│       │   ├── review.md       # Evaluator 输出
-│       │   ├── final_summary.md # 最终汇总
-│       │   ├── .state          # 断点状态
-│       │   └── .*.result / .*metrics  # 内部缓存
+│       │   ├── problem.md         # 输入：题目
+│       │   ├── plan.md            # Planner 输出
+│       │   ├── solution.md        # Builder 输出
+│       │   ├── review.md          # Evaluator 输出
+│       │   ├── final_summary.md   # 最终汇总
+│       │   ├── .state             # 断点状态
+│       │   ├── .git/              # Git 仓库（自动创建，追踪解题过程）
+│       │   └── .*.result/metrics  # 内部缓存
 │       └── ...
-├── textbook/           # 教科书 RAG 知识库（详见下方）
-│   ├── batch_parse.py          # 分卷合并
-│   ├── fix_formulas.py         # OCR 公式修正
-│   ├── extract_image_context.py # 图片上下文提取
-│   ├── rag_build/              # RAG 构建脚本
-│   │   ├── chunk_markdown.py   # 文本分块
-│   │   ├── translate_chunks.py # 中文→英文翻译
-│   │   └── embed_bge.py       # 向量嵌入 + Weaviate 存储
-│   └── weaviate_data/          # Weaviate 向量数据库（61MB，可直接使用）
+├── textbook/                # 教科书 RAG 知识库（详见下方）
+│   ├── batch_parse.py               # 分卷合并
+│   ├── fix_formulas.py              # OCR 公式修正
+│   ├── extract_image_context.py     # 图片上下文提取
+│   ├── mcp_server.py                # MCP 服务器（Cherry Studio 集成）
+│   ├── split_by_chapter.py          # 按章节切分内容
+│   ├── rag_build/                   # RAG 构建脚本
+│   │   ├── chunk_markdown.py        # 文本分块
+│   │   ├── translate_chunks.py      # 中文→英文翻译
+│   │   └── embed_bge.py             # 向量嵌入 + Weaviate 存储
+│   ├── by_chapter/                  # 按章节组织的知识库
+│   └── weaviate_data/               # Weaviate 向量数据库
 └── README.md
 ```
 
@@ -189,6 +250,96 @@ Orchestrator
 ### Agent 定义
 
 各 Agent 的 system prompt 分别定义在 `prompts/` 目录下的独立 `.md` 文件中。`run.py` 启动时读取所有文件并组装成完整的 Orchestrator prompt（含嵌入的 sub-Agent prompt 和 Skill 定义）。新增角色只需在 `prompts/` 下添加 `.md` 文件并更新 `run.py` 的组装逻辑。新增 Skill 只需在 `prompts/skills/` 下添加 `.md` 文件，并在对应 Agent prompt 中声明引用。
+
+### Git 版本控制
+
+每道题的工作目录在启动时自动初始化为 Git 仓库，用于追踪解题过程的完整演变。
+
+**提交时机：**
+
+Orchestrator 在以下节点自动提交：
+
+| 时机 | 提交消息 |
+|------|----------|
+| 初始化后 | `init: workspace setup with problem files` |
+| 预创建空文件后 | `init: create output files` |
+| Planner 完成后 | `plan: v1 complete` |
+| Builder 完成后 | `solution: v1 complete` 或 `solution: v2 revised` |
+| Evaluator 完成后 | `review: v1 complete` 或 `review: v2 revised` |
+| 写入汇总后 | `final: summary` |
+
+**典型 Git 历史（一次通过）：**
+
+```bash
+$ git log --oneline
+a1b2c3d final: summary
+e4f5g6h review: v1 complete
+i7j8k9l solution: v1 complete
+m0n1o2p plan: v1 complete
+q3r4s5t init: create output files
+u6v7w8x init: workspace setup with problem files
+```
+
+**典型 Git 历史（经历 REVISE）：**
+
+```bash
+$ git log --oneline
+a1b2c3d final: summary
+e4f5g6h review: v2 revised
+i7j8k9l solution: v2 revised
+m0n1o2p review: v1 complete
+q3r4s5t solution: v1 complete
+t9u0v1w plan: v1 complete
+x2y3z4a init: create output files
+```
+
+**Agent 的 Git 权限：**
+
+Sub-Agent（Planner/Builder/Evaluator）可以使用只读 Git 命令查看历史，但不能修改仓库：
+- ✅ 允许：`git status`、`git diff`、`git log`、`git add`
+- ❌ 禁止：`git commit`、`git reset`、`git checkout`、`git push`
+
+这样 Agent 可以查看文件变更历史（如 `git diff HEAD~1 solution.md` 查看 Builder 的修改），但提交由 Orchestrator 统一管理，确保提交历史的一致性和可追溯性。
+
+### 权限控制
+
+每个 Agent 的工具权限通过 `spawn.py` 中的 `AGENT_PROFILES` 字典精确控制，使用 Claude Code 的 `--allowed-tools` 参数实现命令级别的权限隔离。
+
+**权限配置示例：**
+
+```python
+AGENT_PROFILES = {
+    "Planner": (
+        "Read,"                          # 读取文件
+        "Write,"                         # 写入文件
+        "Edit,"                          # 编辑文件
+        "Bash(python3 *),"               # 运行 Python 脚本
+        "Bash(source * && python3 *),"   # 激活虚拟环境后运行脚本
+        "Bash(git status*),"             # Git 状态查询
+        "Bash(git diff*),"               # Git 差异比较
+        "Bash(git log*),"                # Git 历史查看
+        "Bash(git add *)"                # Git 暂存文件
+    ),
+    # Builder 和 Evaluator 权限相同
+}
+```
+
+**安全设计：**
+
+1. **命令模式匹配**：`Bash(python3 *)` 只允许以 `python3` 开头的命令，阻止 `rm`、`curl` 等危险操作
+2. **最小权限原则**：Agent 只能执行解题必需的命令，无法安装软件包或访问网络
+3. **Git 写入隔离**：只有 Orchestrator 可以执行 `git commit`，Sub-Agent 只能读取
+4. **工作目录限制**：Agent 被约束在 `{workspace}` 目录内，无法访问其他题目或项目文件
+
+**权限覆盖：**
+
+如果需要临时调整权限，可以通过 `spawn.py` 的 `--tools` 参数覆盖：
+
+```bash
+python3 spawn.py Planner problems/example --tools "Read,Write,Bash"
+```
+
+但通常不需要手动调整，默认配置已针对各 Agent 的职责优化。
 
 ---
 

@@ -19,7 +19,7 @@
      - 批内各题的每个阶段独立推进，互不等待
      - 用 Bash 后台运行（`&` + `wait`）管理并发
      - 全部完成后在**父目录**生成 `batch_summary.md` 汇总所有子题目结果
-3. 对每一道题，先用 Bash 预创建三个空文件（`plan.md`、`solution.md`、`review.md`），sub-Agent 只需用 Write 或 Edit 向对应文件写入/修改内容。然后根据 `{workspace}/.state` 文件（不存在则视为 `planner`），从记录的阶段开始，用 Bash 调用 spawn.py 逐个创建 sub-Agent：
+3. 对每一道题，先用 Bash 预创建三个空文件（`plan.md`、`solution.md`、`review.md`），然后 git add + commit 这些初始文件。sub-Agent 只需用 Write 或 Edit 向对应文件写入/修改内容。每个 Agent 成功完成后，执行 git add + commit（参见"Git 版本控制"部分）。然后根据 `{workspace}/.state` 文件（不存在则视为 `planner`），从记录的阶段开始，用 Bash 调用 spawn.py 逐个创建 sub-Agent：
    ```
    python3 {project_root}/spawn.py <role> <workspace> <prompt_file> <task_file>
    ```
@@ -51,6 +51,51 @@ Agent 完成后状态更新规则：
 - 第二次迭代仍 REVISE → 写 `.state` 为 `done`
 
 注意：每次启动某个 Agent 前才检查 `.state`，不要预先更新。Agent 失败（如 spawn.py 报错）时不更新状态，以便下次从该阶段重试。
+
+## Git 版本控制
+
+每个题目的 workspace 目录已预初始化为 git 仓库。你负责在关键节点执行 git commit，以追踪解题进度。
+
+### 允许使用的 Git 命令
+
+你（Orchestrator）可以使用以下 git 命令：
+- `git -C {workspace} add <file>` — 暂存文件
+- `git -C {workspace} commit -m "<message>"` — 提交
+- `git -C {workspace} status` — 查看状态
+- `git -C {workspace} log --oneline` — 查看历史
+- `git -C {workspace} diff` — 查看变更
+
+**禁止：** `git reset`、`git checkout`、`git branch`、`git merge`、`git push`、`git stash`、`git rm`、`git clean`。
+
+### 提交时机和消息
+
+在以下节点执行 commit（使用 `git -C <workspace>` 指定目录）：
+
+1. **预创建空文件后：**
+   ```
+   git -C {workspace} add plan.md solution.md review.md
+   git -C {workspace} commit -m "init: create output files"
+   ```
+
+2. **Planner 完成后（spawn 成功返回后）：**
+   ```
+   git -C {workspace} add plan.md
+   git -C {workspace} commit -m "plan: v1 complete"
+   ```
+
+3. **Builder 完成后：**
+   - 第一次：`git -C {workspace} commit -m "solution: v1 complete"`
+   - 第二次（REVISE 后）：`git -C {workspace} commit -m "solution: v2 revised"`
+
+4. **Evaluator 完成后：**
+   - 第一次：`git -C {workspace} commit -m "review: v1 complete"`
+   - 第二次（REVISE 后）：`git -C {workspace} commit -m "review: v2 revised"`
+
+**注意：**
+- 每次 commit 前先 `git -C {workspace} add` 对应文件
+- 如果文件没有变化（agent 未修改），跳过该次 commit
+- 通过 `git -C {workspace} status --short` 检查是否有待提交的变更
+- commit 消息使用英文，保持简洁
 
 ## 输出格式
 

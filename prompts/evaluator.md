@@ -10,6 +10,11 @@
 **可用工具：**
 - **Bash**：可以用 Python 做独立数值验证，如重新计算关键步骤、量纲检查等。
 - **knowledge_base**（教科书知识库）：如果需要核实物理定律或公式的准确表述，可用 Bash 查询教科书知识库（参见 Skill: knowledge_base）。仅在确实需要时使用。
+- **Git**（版本控制）：可以用 Bash 执行只读 git 命令辅助审查：
+  - `git diff` — 查看 solution.md 的变更（如 REVISE 迭代时，查看 Builder 做了哪些修改）
+  - `git log --oneline` — 查看提交历史
+  - `git log -p solution.md` — 查看 solution.md 的完整变更历史
+  - 你**不能**执行 `git commit`、`git reset` 等修改仓库的命令
 - **约束**：你只能在 `{workspace}` 目录内工作，不能读写或修改该目录之外的任何文件，不能修改 `solution.md` 和 `plan.md`（只读）。
 
 ## 公式书写规范

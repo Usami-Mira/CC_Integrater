@@ -38,6 +38,47 @@ def read_skills():
     return "\n\n".join(parts)
 
 
+def init_workspace_git(workspace):
+    """Initialize git repo in workspace for version tracking."""
+    git_dir = os.path.join(workspace, ".git")
+    if os.path.exists(git_dir):
+        print(f"[git] repo already exists in {workspace}")
+        return
+
+    # git init
+    subprocess.run(["git", "init", workspace], check=True, capture_output=True)
+
+    # Write .gitignore
+    gitignore_path = os.path.join(workspace, ".gitignore")
+    gitignore_content = """\
+# Agent runtime artifacts
+.*.log
+.*.result
+.*.metrics
+.state
+query_rag.py
+__pycache__/
+*.pyc
+*.tmp
+"""
+    with open(gitignore_path, "w") as f:
+        f.write(gitignore_content)
+
+    # Configure git user
+    subprocess.run(["git", "-C", workspace, "config", "user.email", "agent@physics-solver"],
+                   check=True, capture_output=True)
+    subprocess.run(["git", "-C", workspace, "config", "user.name", "Physics Agent"],
+                   check=True, capture_output=True)
+
+    # Initial commit
+    subprocess.run(["git", "-C", workspace, "add", "-A"], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", workspace, "commit", "-m", "init: workspace setup with problem files"],
+        check=True, capture_output=True
+    )
+    print(f"[git] initialized repo in {workspace}")
+
+
 def assemble_orchestrator_prompt():
     """Assemble the complete orchestrator system prompt from components."""
     template = read_prompt("orchestrator")
@@ -74,6 +115,9 @@ def main():
     # Set env vars so query_rag.py knows where model and data are
     os.environ["RAG_MODEL_DIR"] = str(ROOT / "textbook" / "models" / "bge-m3")
     os.environ["RAG_DATA_DIR"] = str(ROOT / "textbook" / "weaviate_data")
+
+    # Initialize git repo in workspace
+    init_workspace_git(workspace)
 
     orchestrator_prompt = assemble_orchestrator_prompt()
 

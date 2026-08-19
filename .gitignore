@@ -24,6 +24,14 @@ textbook/merged/chunks.json
 textbook/merged/chunks_translated.json
 textbook/merged/translation_cache/
 
+# 提取的教材内容（含原文，不提交）
+textbook/merged/examples.json
+textbook/merged/exercises.json
+textbook/merged/pure_content.json
+textbook/merged/chunked_examples.json
+textbook/merged/chunked_pure_content.json
+textbook/merged/chunks_final.json
+
 # 图片上下文数据
 textbook/image_context.json
 
