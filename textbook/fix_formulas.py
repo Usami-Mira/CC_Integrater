@@ -35,7 +35,7 @@ except ImportError:
 MODEL_CONFIG = {
     # OpenAI-compatible API 格式
     "api_base": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-    "api_key": "REMOVED_API_KEY",
+    "api_key": os.environ.get("DASHSCOPE_API_KEY", "your-api-key-here"),
     "model": "qwen3.6-flash",
     "timeout": 120,
     "max_retries": 3,
