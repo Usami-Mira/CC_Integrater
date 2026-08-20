@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cc-integrater"
+version = "0.1.0"
+description = "Multi-agent physics problem solving with a local textbook RAG knowledge base"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "FlagEmbedding==1.4.0",
+    "mcp==2.0.0",
+    "openai==2.47.0",
+    "requests==2.32.5",
+    "torch==2.12.1",
+    "tqdm==4.67.1",
+    "weaviate-client==4.23.0",
+]
+
+[tool.setuptools]
+py-modules = ["process_runner", "run", "spawn", "stream_parser"]

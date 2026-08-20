@@ -4,9 +4,9 @@
 
 workspace 中已包含 `query_rag.py` 查询脚本，用 Bash 调用：
 ```
-source {project_root}/textbook/rag_env/bin/activate && python3 {workspace}/query_rag.py "查询内容" --top_k 5
+python3 query_rag.py "查询内容" --top_k 5
 ```
-- `{project_root}` 是项目根目录（包含 prompts/ 的那一级）
+- 子 Agent 进程的当前目录就是对应的 `{workspace}`，依赖由父进程的虚拟环境继承
 - 支持中英文查询，返回教科书相关章节内容（含公式）
 - `--top_k` 控制返回条数，默认 5，建议 3-5
 - `--json` 可选，输出 JSON 格式便于解析

@@ -47,6 +47,7 @@ textbook/.local/
 # Python 缓存
 __pycache__/
 *.pyc
+*.egg-info/
 
 # 杂项
 *:Zone.Identifier

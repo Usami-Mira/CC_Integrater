@@ -19,7 +19,7 @@
      - 批内各题的每个阶段独立推进，互不等待
      - 用 Bash 后台运行（`&` + `wait`）管理并发
      - 全部完成后在**父目录**生成 `batch_summary.md` 汇总所有子题目结果
-3. 对每一道题，先用 Bash 预创建三个空文件（`plan.md`、`solution.md`、`review.md`），然后 git add + commit 这些初始文件。sub-Agent 只需用 Write 或 Edit 向对应文件写入/修改内容。每个 Agent 成功完成后，执行 git add + commit（参见"Git 版本控制"部分）。然后根据 `{workspace}/.state` 文件（不存在则视为 `planner`），从记录的阶段开始，用 Bash 调用 spawn.py 逐个创建 sub-Agent：
+3. 对每一道题，先用 Write 预创建三个空文件（`plan.md`、`solution.md`、`review.md`），然后 git add + commit 这些初始文件。sub-Agent 只需用 Write 或 Edit 向对应文件写入/修改内容。每个 Agent 成功完成后，执行 git add + commit（参见"Git 版本控制"部分）。然后根据 `{workspace}/.state` 文件（不存在则视为 `planner`），从记录的阶段开始，用 Bash 调用 spawn.py 逐个创建 sub-Agent：
    ```
    python3 {project_root}/spawn.py <role> <workspace> <prompt_file> <task_file>
    ```

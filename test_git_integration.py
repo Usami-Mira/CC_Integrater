@@ -14,6 +14,7 @@ import sys
 import os
 import tempfile
 import shutil
+import stat
 from pathlib import Path
 
 # Add project root to path
@@ -38,12 +39,16 @@ class TestAgentProfiles(unittest.TestCase):
         self.assertIn("Evaluator", self.spawn.AGENT_PROFILES)
 
     def test_profiles_have_required_tools(self):
-        """Each profile should have Read, Write, Edit tools."""
-        for role in ["Planner", "Builder", "Evaluator"]:
+        """Each profile should have the file tools required by its role."""
+        for role in ["Planner", "Builder"]:
             profile = self.spawn.AGENT_PROFILES[role]
             self.assertIn("Read", profile)
             self.assertIn("Write", profile)
             self.assertIn("Edit", profile)
+        evaluator = self.spawn.AGENT_PROFILES["Evaluator"]
+        self.assertIn("Read", evaluator)
+        self.assertIn("Write", evaluator)
+        self.assertNotIn("Edit", evaluator)
 
     def test_profiles_restrict_bash(self):
         """Bash should be restricted to specific patterns."""
@@ -54,8 +59,8 @@ class TestAgentProfiles(unittest.TestCase):
             # Should allow git read operations
             self.assertIn("Bash(git status*)", profile)
             self.assertIn("Bash(git diff*)", profile)
-            self.assertIn("Bash(git log*)", profile)
-            self.assertIn("Bash(git add *)", profile)
+            self.assertIn("Bash(git log *)", profile)
+            self.assertNotIn("Bash(git add *)", profile)
             # Should NOT allow unrestricted Bash
             self.assertNotIn("Bash,", profile)
 
@@ -70,12 +75,15 @@ class TestAgentProfiles(unittest.TestCase):
             self.assertNotIn("git branch", profile)
             self.assertNotIn("git merge", profile)
             self.assertNotIn("git push", profile)
+            self.assertIn("Bash(git add *)", self.spawn.AGENT_DISALLOWED_TOOLS)
+            self.assertIn("Bash(git commit *)", self.spawn.AGENT_DISALLOWED_TOOLS)
 
     def test_kb_skill_pattern(self):
         """Profiles should allow knowledge base skill pattern."""
         for role in ["Planner", "Builder", "Evaluator"]:
             profile = self.spawn.AGENT_PROFILES[role]
-            self.assertIn("Bash(source * && python3 *)", profile)
+            self.assertIn("Bash(python3 *)", profile)
+            self.assertIn("Bash(python *)", profile)
 
 
 class TestInitWorkspaceGit(unittest.TestCase):
@@ -98,7 +106,11 @@ class TestInitWorkspaceGit(unittest.TestCase):
 
     def tearDown(self):
         """Clean up temporary directory."""
-        shutil.rmtree(self.test_dir)
+        def remove_readonly(func, path, _exc_info):
+            os.chmod(path, stat.S_IWRITE)
+            func(path)
+
+        shutil.rmtree(self.test_dir, onerror=remove_readonly)
 
     def test_git_init_creates_repo(self):
         """init_workspace_git should create .git directory."""
@@ -186,11 +198,10 @@ class TestPermissionPatterns(unittest.TestCase):
         # Should match: git diff, git diff HEAD, git diff file.md
         self.assertIn("git diff*", pattern)
 
-    def test_git_add_requires_argument(self):
-        """Bash(git add *) should require an argument (space after add)."""
-        pattern = "Bash(git add *)"
-        # Note the space: "git add " requires something after "add"
-        self.assertIn("git add *", pattern)
+    def test_git_add_is_explicitly_denied(self):
+        """Sub-agents must not be able to stage files."""
+        import spawn
+        self.assertIn("Bash(git add *)", spawn.AGENT_DISALLOWED_TOOLS)
 
 
 class TestSpawnCommandLine(unittest.TestCase):
@@ -217,19 +228,29 @@ class TestSpawnCommandLine(unittest.TestCase):
         self.assertEqual(allowed_tools, expected_profile)
         self.assertNotEqual(allowed_tools, "Read,Write,Edit,Bash")
 
-    def test_cli_override(self):
-        """--tools flag should override profile."""
-        # Simulate CLI override logic
-        role = "Planner"
-        allowed_tools = "Read,Write,Edit,Bash"  # fallback
-        if role in self.spawn.AGENT_PROFILES:
-            allowed_tools = self.spawn.AGENT_PROFILES[role]
+    def test_tool_categories_are_role_specific(self):
+        """Evaluator should not receive the Edit tool category."""
+        self.assertIn("Edit", self.spawn.AGENT_TOOL_SETS["Planner"])
+        self.assertIn("Edit", self.spawn.AGENT_TOOL_SETS["Builder"])
+        self.assertNotIn("Edit", self.spawn.AGENT_TOOL_SETS["Evaluator"])
 
-        # Simulate --tools override
-        cli_tools = "Read,Write"
-        allowed_tools = cli_tools
 
-        self.assertEqual(allowed_tools, "Read,Write")
+class TestOrchestratorPermissions(unittest.TestCase):
+    """Test the Orchestrator's staged-write boundary."""
+
+    def test_orchestrator_has_no_unrestricted_bash_preapproval(self):
+        import run
+        self.assertNotIn("Bash,", run.ORCHESTRATOR_ALLOWED_TOOLS)
+        self.assertIn("Bash(git -C * add *)", run.ORCHESTRATOR_ALLOWED_TOOLS)
+        self.assertIn("Bash(git -C * commit *)", run.ORCHESTRATOR_ALLOWED_TOOLS)
+
+    def test_orchestrator_denies_destructive_git(self):
+        import run
+        for command in ["push", "reset", "clean", "checkout", "switch", "merge", "rebase"]:
+            self.assertTrue(
+                any(command in rule for rule in run.ORCHESTRATOR_DISALLOWED_TOOLS),
+                command,
+            )
 
 
 class TestGitignoreContent(unittest.TestCase):

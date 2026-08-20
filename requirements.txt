@@ -1,0 +1,2 @@
+# Direct runtime dependencies are pinned in pyproject.toml.
+.

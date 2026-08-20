@@ -31,7 +31,7 @@ from mcp.server.mcpserver import MCPServer
 
 
 # Paths
-MODEL_DIR = Path(os.environ.get('RAG_MODEL_DIR', str(ROOT / 'textbook' / 'models' / 'bge-m3')))
+MODEL_SOURCE = os.environ.get('RAG_MODEL_DIR', 'BAAI/bge-m3')
 DATA_DIR = Path(os.environ.get('RAG_DATA_DIR', str(ROOT / 'textbook' / 'weaviate_data')))
 
 
@@ -40,9 +40,19 @@ class PhysicsKnowledgeBase:
 
     def __init__(self):
         """Initialize model and Weaviate client."""
+        if not DATA_DIR.is_dir():
+            raise FileNotFoundError(
+                f"Weaviate data directory not found: {DATA_DIR}. Set RAG_DATA_DIR "
+                "or restore textbook/weaviate_data from the repository."
+            )
+
         print("Loading BGE-M3 model...", file=sys.stderr)
         device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.model = BGEM3FlagModel(str(MODEL_DIR), use_fp16=True, devices=device)
+        self.model = BGEM3FlagModel(
+            MODEL_SOURCE,
+            use_fp16=(device == "cuda"),
+            devices=device,
+        )
         print(f"Model loaded on {device}", file=sys.stderr)
 
         print("Connecting to Weaviate...", file=sys.stderr)

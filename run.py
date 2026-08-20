@@ -3,12 +3,17 @@
 Streams Orchestrator output to terminal and log file in real-time.
 """
 
-import sys, os, json, subprocess, time
+import json
+import os
+import subprocess
+import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).parent.resolve()
 sys.path.insert(0, str(ROOT))
 from stream_parser import parse_stream_event
+from process_runner import run_streaming_process
 
 PROMPTS_DIR = ROOT / "prompts"
 SKILLS_DIR = PROMPTS_DIR / "skills"
@@ -17,6 +22,36 @@ CONFIG = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
 MODEL = CONFIG.get("model", "sonnet")
 TIMEOUT = CONFIG.get("timeout_seconds", 600)
 MAX_CONCURRENT = CONFIG.get("max_concurrent_problems", 3)
+
+ORCHESTRATOR_TOOLS = "Bash,Read,Write"
+ORCHESTRATOR_ALLOWED_TOOLS = (
+    "Read",
+    "Write",
+    "Bash(python3 *spawn.py *)",
+    "Bash(python *spawn.py *)",
+    "Bash(git -C * status *)",
+    "Bash(git -C * diff *)",
+    "Bash(git -C * log *)",
+    "Bash(git -C * add *)",
+    "Bash(git -C * commit *)",
+)
+ORCHESTRATOR_DISALLOWED_TOOLS = (
+    "Bash(git push *)",
+    "Bash(git -C * push *)",
+    "Bash(git reset *)",
+    "Bash(git -C * reset *)",
+    "Bash(git clean *)",
+    "Bash(git -C * clean *)",
+    "Bash(git checkout *)",
+    "Bash(git -C * checkout *)",
+    "Bash(git switch *)",
+    "Bash(git -C * switch *)",
+    "Bash(git rebase *)",
+    "Bash(git -C * rebase *)",
+    "Bash(git merge *)",
+    "Bash(git -C * merge *)",
+    "mcp__*",
+)
 
 
 def read_prompt(name):
@@ -104,7 +139,7 @@ def assemble_orchestrator_prompt():
 
 
 def main():
-    workspace = sys.argv[1] if len(sys.argv) > 1 else "problems/001"
+    workspace = str(Path(sys.argv[1] if len(sys.argv) > 1 else "problems/001").resolve())
 
     # Copy RAG query script into workspace so agents can run it locally
     query_script = ROOT / "textbook" / "rag_build" / "query_rag.py"
@@ -113,8 +148,8 @@ def main():
         shutil.copy2(str(query_script), os.path.join(workspace, "query_rag.py"))
 
     # Set env vars so query_rag.py knows where model and data are
-    os.environ["RAG_MODEL_DIR"] = str(ROOT / "textbook" / "models" / "bge-m3")
-    os.environ["RAG_DATA_DIR"] = str(ROOT / "textbook" / "weaviate_data")
+    os.environ.setdefault("RAG_MODEL_DIR", "BAAI/bge-m3")
+    os.environ.setdefault("RAG_DATA_DIR", str(ROOT / "textbook" / "weaviate_data"))
 
     # Initialize git repo in workspace
     init_workspace_git(workspace)
@@ -133,11 +168,13 @@ def main():
         "--print",
         "--output-format", "stream-json",
         "--verbose",
-        "--permission-mode", "bypassPermissions",
+        "--permission-mode", "default",
         "--bare",
         "--agents", agents_json,
         "--agent", "Orchestrator",
-        "--allowed-tools", "Bash,Read,Write",
+        "--tools", ORCHESTRATOR_TOOLS,
+        "--allowed-tools", *ORCHESTRATOR_ALLOWED_TOOLS,
+        "--disallowed-tools", *ORCHESTRATOR_DISALLOWED_TOOLS,
         "--add-dir", workspace,
         "--model", MODEL,
         f"请解决 {workspace} 中的物理题目。\n"
@@ -156,16 +193,13 @@ def main():
         log_file.write(f"[start] Orchestrator | {time.strftime('%H:%M:%S')}\n")
         log_file.flush()
 
-        proc = subprocess.Popen(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-        )
-
         result_event = None
 
-        for line in proc.stdout:
+        def handle_stdout(line):
+            nonlocal result_event
             line = line.strip()
             if not line:
-                continue
+                return
             etype, summary, event = parse_stream_event(line)
             if summary:
                 # Print concise progress to terminal
@@ -184,12 +218,28 @@ def main():
             if etype == "result" and event:
                 result_event = event
 
-        proc.wait(timeout=TIMEOUT)
+        try:
+            process_result = run_streaming_process(
+                cmd,
+                timeout=TIMEOUT,
+                on_stdout_line=handle_stdout,
+                cwd=workspace,
+                env=os.environ.copy(),
+            )
+        except subprocess.TimeoutExpired as exc:
+            elapsed = time.time() - start_time
+            stderr_output = exc.stderr or ""
+            log_file.write(
+                f"[error] timeout={TIMEOUT}s stderr={stderr_output[-500:]}\n"
+            )
+            print(f"[Orchestrator] error: timed out after {TIMEOUT}s")
+            sys.exit(1)
+
         elapsed = time.time() - start_time
 
-        if proc.returncode != 0:
-            stderr_output = proc.stderr.read() if proc.stderr else ""
-            print(f"[Orchestrator] error: exit code {proc.returncode}")
+        if process_result.returncode != 0:
+            stderr_output = process_result.stderr
+            print(f"[Orchestrator] error: exit code {process_result.returncode}")
             print(stderr_output[:500])
             sys.exit(1)
 

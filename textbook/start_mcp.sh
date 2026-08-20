@@ -1,4 +1,5 @@
-#!/bin/bash
-cd /home/usamimira/PHY-LLM/CC_Integrater/textbook
-source rag_env/bin/activate
-python3 mcp_server.py
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+exec python3 "$SCRIPT_DIR/mcp_server.py"

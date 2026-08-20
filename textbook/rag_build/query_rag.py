@@ -11,24 +11,26 @@ Usage:
 import argparse
 import json
 import os
-import sys
-import torch
 from pathlib import Path
-from FlagEmbedding import BGEM3FlagModel
-import weaviate
-from weaviate.classes.init import AdditionalConfig
 
 
 SCRIPT_DIR = Path(__file__).parent
 TEXTBOOK_DIR = SCRIPT_DIR.parent
-MODEL_DIR = Path(os.environ.get('RAG_MODEL_DIR', str(TEXTBOOK_DIR / 'models' / 'bge-m3')))
+MODEL_SOURCE = os.environ.get('RAG_MODEL_DIR', 'BAAI/bge-m3')
 DATA_DIR = Path(os.environ.get('RAG_DATA_DIR', str(TEXTBOOK_DIR / 'weaviate_data')))
 
 
 def load_model():
-    """Load BGE-M3 model for query embedding."""
+    """Load BGE-M3 from a local path or Hugging Face model identifier."""
+    import torch
+    from FlagEmbedding import BGEM3FlagModel
+
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    model = BGEM3FlagModel(str(MODEL_DIR), use_fp16=True, devices=device)
+    model = BGEM3FlagModel(
+        MODEL_SOURCE,
+        use_fp16=(device == "cuda"),
+        devices=device,
+    )
     return model
 
 
@@ -41,6 +43,16 @@ def embed_query(text, model):
 
 def query_weaviate(query_text, top_k=5):
     """Query Weaviate and return top results."""
+    if not DATA_DIR.is_dir():
+        raise FileNotFoundError(
+            f"Weaviate data directory not found: {DATA_DIR}. "
+            "Clone the repository with its textbook/weaviate_data directory "
+            "or set RAG_DATA_DIR."
+        )
+
+    import weaviate
+    from weaviate.classes.init import AdditionalConfig
+
     model = load_model()
     query_vec = embed_query(query_text, model)
 
@@ -49,15 +61,16 @@ def query_weaviate(query_text, top_k=5):
         additional_config=AdditionalConfig(timeout=(5, 30))
     )
 
-    collection = client.collections.get("PhysicsChunks")
-    results = collection.query.near_vector(
-        near_vector=query_vec,
-        limit=top_k,
-        return_properties=["book", "chapter", "section", "title", "titleEn", "content", "contentEn"]
-    )
-
-    client.close()
-    return results.objects
+    try:
+        collection = client.collections.get("PhysicsChunks")
+        results = collection.query.near_vector(
+            near_vector=query_vec,
+            limit=top_k,
+            return_properties=["book", "chapter", "section", "title", "content"]
+        )
+        return results.objects
+    finally:
+        client.close()
 
 
 def format_results(query, objects):
@@ -66,24 +79,34 @@ def format_results(query, objects):
 
     for i, obj in enumerate(objects):
         p = obj.properties
-        lines.append(f"\n[{i+1}] {p['title']}")
-        lines.append(f"    EN: {p['titleEn']}")
-        lines.append(f"    Book: {p['book']} | Chapter: {p['chapter']} | Section: {p['section']}")
+        lines.append(f"\n[{i+1}] {p.get('title', '')}")
+        lines.append(
+            f"    Book: {p.get('book', '')} | Chapter: {p.get('chapter', '')} "
+            f"| Section: {p.get('section', '')}"
+        )
 
-        content = p['content']
+        content = p.get('content', '')
         if len(content) > 500:
             content = content[:500] + "..."
         lines.append(f"    Content: {content}")
 
-        content_en = p.get('contentEn', '')
-        if content_en and content_en != content:
-            if len(content_en) > 300:
-                content_en = content_en[:300] + "..."
-            lines.append(f"    EN: {content_en}")
-
         lines.append("-" * 40)
 
     return "\n".join(lines)
+
+
+def results_as_dicts(objects):
+    """Convert Weaviate result objects to the public JSON representation."""
+    return [
+        {
+            "book": obj.properties.get('book', ''),
+            "chapter": obj.properties.get('chapter', ''),
+            "section": obj.properties.get('section', ''),
+            "title": obj.properties.get('title', ''),
+            "content": obj.properties.get('content', ''),
+        }
+        for obj in objects
+    ]
 
 
 def main():
@@ -96,19 +119,7 @@ def main():
     objects = query_weaviate(args.query, args.top_k)
 
     if args.json:
-        results = []
-        for obj in objects:
-            p = obj.properties
-            results.append({
-                "book": p['book'],
-                "chapter": p['chapter'],
-                "section": p['section'],
-                "title": p['title'],
-                "title_en": p['titleEn'],
-                "content": p['content'],
-                "content_en": p.get('contentEn', ''),
-            })
-        print(json.dumps(results, ensure_ascii=False, indent=2))
+        print(json.dumps(results_as_dicts(objects), ensure_ascii=False, indent=2))
     else:
         print(format_results(args.query, objects))
 

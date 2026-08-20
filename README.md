@@ -36,6 +36,27 @@ git --version
 
 **注意**：Git 用于追踪每道题的解题过程演变（plan → solution → review），支持自动提交和迭代历史查看。
 
+### 安装 Python 依赖
+
+需要 Python 3.10 或更高版本。项目的直接运行时依赖固定在 `pyproject.toml`，
+`requirements.txt` 提供统一安装入口：
+
+```bash
+python3 -m venv .venv
+
+# Linux / macOS
+source .venv/bin/activate
+
+# Windows PowerShell
+# .venv\Scripts\Activate.ps1
+
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+```
+
+Torch 的 CUDA 构建与显卡驱动有关；需要 GPU 加速时，请按 PyTorch 官方安装器替换默认的
+Torch wheel。CPU 环境会自动关闭 FP16。
+
 ### 配置 API Key（按量计费模式）
 
 如果使用第三方兼容 API（如硅基流动等），设置环境变量：
@@ -99,6 +120,10 @@ python3 run.py problems/example_multiple
 ```bash
 # 运行 Git 集成测试（权限配置、Git 初始化等）
 python3 test_git_integration.py -v
+
+# 运行进程超时和 RAG 字段测试
+python3 test_process_runner.py -v
+python3 test_rag_query.py -v
 
 # 运行文本处理管道测试（分块、token 估算等）
 python3 textbook/run_tests.py
@@ -296,50 +321,43 @@ x2y3z4a init: create output files
 **Agent 的 Git 权限：**
 
 Sub-Agent（Planner/Builder/Evaluator）可以使用只读 Git 命令查看历史，但不能修改仓库：
-- ✅ 允许：`git status`、`git diff`、`git log`、`git add`
-- ❌ 禁止：`git commit`、`git reset`、`git checkout`、`git push`
+- ✅ 允许：`git status`、`git diff`、`git log`
+- ❌ 禁止：`git add`、`git commit`、`git reset`、`git checkout`、`git push`
 
 这样 Agent 可以查看文件变更历史（如 `git diff HEAD~1 solution.md` 查看 Builder 的修改），但提交由 Orchestrator 统一管理，确保提交历史的一致性和可追溯性。
 
 ### 权限控制
 
-每个 Agent 的工具权限通过 `spawn.py` 中的 `AGENT_PROFILES` 字典精确控制，使用 Claude Code 的 `--allowed-tools` 参数实现命令级别的权限隔离。
+每个 Agent 的工具权限通过 `spawn.py` 中的配置分两层控制：`--tools` 限制可见的工具类别，
+`--allowed-tools` 只预批准匹配的命令，`--disallowed-tools` 明确拒绝 Git 写入和网络下载命令。
+所有进程使用默认权限模式，不再使用 `bypassPermissions`。
 
 **权限配置示例：**
 
 ```python
 AGENT_PROFILES = {
     "Planner": (
-        "Read,"                          # 读取文件
-        "Write,"                         # 写入文件
-        "Edit,"                          # 编辑文件
-        "Bash(python3 *),"               # 运行 Python 脚本
-        "Bash(source * && python3 *),"   # 激活虚拟环境后运行脚本
-        "Bash(git status*),"             # Git 状态查询
-        "Bash(git diff*),"               # Git 差异比较
-        "Bash(git log*),"                # Git 历史查看
-        "Bash(git add *)"                # Git 暂存文件
+        "Read",                          # 读取文件
+        "Write",                         # 写入文件
+        "Edit",                          # 编辑文件
+        "Bash(python3 *)",               # 运行 Python 脚本
+        "Bash(git status*)",             # Git 状态查询
+        "Bash(git diff*)",               # Git 差异比较
+        "Bash(git log *)"                # Git 历史查看
     ),
-    # Builder 和 Evaluator 权限相同
+    # Evaluator 额外移除了 Edit 工具类别
 }
 ```
 
 **安全设计：**
 
-1. **命令模式匹配**：`Bash(python3 *)` 只允许以 `python3` 开头的命令，阻止 `rm`、`curl` 等危险操作
-2. **最小权限原则**：Agent 只能执行解题必需的命令，无法安装软件包或访问网络
-3. **Git 写入隔离**：只有 Orchestrator 可以执行 `git commit`，Sub-Agent 只能读取
-4. **工作目录限制**：Agent 被约束在 `{workspace}` 目录内，无法访问其他题目或项目文件
+1. **默认权限模式**：取消跳过确认的 `bypassPermissions`
+2. **Git 写入隔离**：Sub-Agent 只预批准查询命令；暂存和提交只交给 Orchestrator
+3. **危险操作拒绝**：两层配置显式拒绝 push、reset、clean、checkout、merge、rebase 等命令
+4. **工作目录收窄**：Claude 子进程直接以题目 workspace 为当前目录运行
 
-**权限覆盖：**
-
-如果需要临时调整权限，可以通过 `spawn.py` 的 `--tools` 参数覆盖：
-
-```bash
-python3 spawn.py Planner problems/example --tools "Read,Write,Bash"
-```
-
-但通常不需要手动调整，默认配置已针对各 Agent 的职责优化。
+这里是 Claude Code 工具层的权限边界，不等同于操作系统沙箱。被允许的 Python 计算仍然是通用
+代码执行；处理不可信题目时应额外使用容器或低权限系统账户。
 
 ---
 
@@ -356,8 +374,8 @@ python3 spawn.py Planner problems/example --tools "Read,Write,Bash"
 | 3. 图片上下文 | `extract_image_context.py` | 提取图文关联 |
 | 4. 合并分卷 | `batch_parse.py` | 多 part → 单文件 Markdown |
 | 5. 文本分块 | `rag_build/chunk_markdown.py` | 按章节切分为 1139 个语义块 |
-| 6. 翻译 | `rag_build/translate_chunks.py` | Qwen 3.6 Flash 中英双语（20 并发） |
-| 7. 向量嵌入 | `rag_build/embed_bge.py` | BGE-base-en-v1.5 → Weaviate |
+| 6. 翻译（可选） | `rag_build/translate_chunks.py` | 历史流水线的中英双语步骤；BGE-M3 检索不依赖该字段 |
+| 7. 向量嵌入 | `rag_build/embed_bge.py` | BGE-M3（1024 维）→ Weaviate |
 
 ### 技术选型
 
@@ -365,9 +383,25 @@ python3 spawn.py Planner problems/example --tools "Read,Write,Bash"
 |------|------|------|
 | OCR | MinerU Web API | 结构化输出，支持公式和图片 |
 | 翻译 | Qwen 3.6 Flash | 快速、物理术语准确 |
-| 嵌入模型 | BGE-base-en-v1.5 | 768维，语义检索效果好 |
+| 嵌入模型 | BGE-M3 (`BAAI/bge-m3`) | 1024 维，原生支持中英文检索 |
 | 向量数据库 | Weaviate Embedded | 无需 Docker，本地持久化 |
 
 ### 数据说明
 
-原始 PDF、OCR 输出、合并后的 Markdown、图片和嵌入模型文件均通过 `.gitignore` 排除，不纳入版本管理。构建好的 Weaviate 数据库（`weaviate_data/`，61MB）直接包含在仓库中，clone 后即可使用。如需从头重建知识库，按上表步骤依次运行即可。
+原始 PDF、OCR 输出、合并后的 Markdown、图片和嵌入模型文件均通过 `.gitignore` 排除，不纳入版本管理。
+仓库包含约 54 MB 的 `textbook/weaviate_data/`，安装依赖后可以直接查询。首次运行会从
+Hugging Face 下载 `BAAI/bge-m3` 并写入用户缓存，也可以通过 `RAG_MODEL_DIR` 指向已有本地模型：
+
+```bash
+python3 textbook/rag_build/query_rag.py "库仑定律" --top_k 5
+```
+
+查询和建库统一使用 `book`、`chapter`、`section`、`title`、`content` 等实际 schema 字段，
+不再请求不存在的 `titleEn` / `contentEn`。
+
+从头重建数据库需要源数据生成的 `chunks_final.json`，该文件不随仓库分发。准备好输入后设置
+`RAG_CHUNKS_FILE=/path/to/chunks_final.json`，可选设置 `RAG_MODEL_DIR` 和 `RAG_DATA_DIR`，再运行：
+
+```bash
+python3 textbook/rag_build/embed_bge.py
+```

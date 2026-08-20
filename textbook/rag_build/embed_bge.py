@@ -5,6 +5,7 @@ BGE-M3: 1024-dim, supports Chinese natively, no translation needed.
 """
 
 import json
+import os
 import torch
 from pathlib import Path
 from FlagEmbedding import BGEM3FlagModel
@@ -15,14 +16,23 @@ from weaviate.classes.data import DataObject
 from tqdm import tqdm
 
 
-MODEL_PATH = str(Path(__file__).parent.parent / 'models' / 'bge-m3')
+TEXTBOOK_DIR = Path(__file__).parent.parent
+MODEL_SOURCE = os.environ.get('RAG_MODEL_DIR', 'BAAI/bge-m3')
+DATA_DIR = Path(os.environ.get('RAG_DATA_DIR', str(TEXTBOOK_DIR / 'weaviate_data')))
+CHUNKS_FILE = Path(
+    os.environ.get('RAG_CHUNKS_FILE', str(TEXTBOOK_DIR / 'merged' / 'chunks_final.json'))
+)
 
 
 def load_model():
     """Load BGE-M3 model."""
-    print(f"Loading BGE-M3 from {MODEL_PATH}...")
+    print(f"Loading BGE-M3 from {MODEL_SOURCE}...")
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    model = BGEM3FlagModel(MODEL_PATH, use_fp16=True, devices=device)
+    model = BGEM3FlagModel(
+        MODEL_SOURCE,
+        use_fp16=(device == "cuda"),
+        devices=device,
+    )
     print(f"Model loaded on {device}")
     return model
 
@@ -37,11 +47,11 @@ def get_embeddings(texts, model, max_length=2048):
 def setup_weaviate():
     """Setup Weaviate client and collection with 1024-dim vectors."""
     print("Setting up Weaviate...")
-    data_path = str(Path(__file__).parent.parent / 'weaviate_data')
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
 
     client = weaviate.connect_to_embedded(
         headers={},
-        persistence_data_path=data_path,
+        persistence_data_path=str(DATA_DIR),
         additional_config=AdditionalConfig(timeout=(5, 120))
     )
 
@@ -74,11 +84,15 @@ def setup_weaviate():
 
 
 def main():
-    base_dir = Path(__file__).parent.parent / 'merged'
-    chunks_file = base_dir / 'chunks_final.json'
+    if not CHUNKS_FILE.is_file():
+        raise FileNotFoundError(
+            f"Rebuild input not found: {CHUNKS_FILE}. The source-derived chunks "
+            "are not shipped in this repository; create them with the documented "
+            "pipeline or set RAG_CHUNKS_FILE."
+        )
 
-    print(f"Loading chunks from {chunks_file}...")
-    with open(chunks_file, 'r', encoding='utf-8') as f:
+    print(f"Loading chunks from {CHUNKS_FILE}...")
+    with open(CHUNKS_FILE, 'r', encoding='utf-8') as f:
         chunks = json.load(f)
     print(f"Loaded {len(chunks)} chunks")
 

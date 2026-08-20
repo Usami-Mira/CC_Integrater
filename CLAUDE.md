@@ -2,18 +2,18 @@
 
 ## CRITICAL: Directory Structure and Working Directory
 
-**Project Root**: `/home/usamimira/PHY-LLM/CC_Integrater`
+**Project Root**: the directory containing this file
 
-**Bash tool default working directory**: `/home/usamimira/PHY-LLM/CC_Integrater`
+**Bash tool default working directory**: the project root
 
-**IMPORTANT**: RAG scripts MUST run from `textbook/` subdirectory. Always use subshell with `cd`:
+RAG scripts resolve paths relative to their own location and can run from the project root:
 ```bash
-(source rag_env/bin/activate && python3 rag_build/embed_bge.py)
+python3 textbook/rag_build/query_rag.py "库仑定律"
 ```
 
 ### Directory Layout
 ```
-/home/usamimira/PHY-LLM/CC_Integrater/     ← Project root (Bash default cwd)
+CC_Integrater/                             ← Project root (Bash default cwd)
 ├── run.py, spawn.py, stream_parser.py     ← Agent orchestration scripts
 ├── config.json                            ← Agent configuration
 ├── prompts/                               ← Agent system prompts
@@ -22,37 +22,30 @@
 │   └── skills/                            ← Skill definitions
 ├── problems/                              ← Problem workspaces (e.g., CPhO42j/)
 └── textbook/                              ← RAG knowledge base (SEPARATE WORKING DIR)
-    ├── rag_env/                           ← Python virtual environment
-    │   └── bin/activate                   ← Activate script
-    ├── rag_build/                         ← RAG scripts (run from textbook/)
+    ├── rag_build/                         ← RAG scripts
     │   ├── embed_bge.py                   ← Embedding generation
     │   └── query_rag.py                   ← RAG query tool
-    ├── models/bge-m3/                     ← BGE-M3 model files
     ├── weaviate_data/                     ← Weaviate vector database
-    ├── merged/                            ← Processed textbook chunks
+    ├── merged/                            ← Optional local rebuild inputs (not shipped)
     └── *_output/                          ← OCR output directories
-```
-
-**Key Rule**: When running RAG scripts, the working directory MUST be `textbook/`. Use subshell:
-```bash
-(source rag_env/bin/activate && python3 rag_build/<script>.py)
 ```
 
 ## Key Paths
 
-- **Models**: `/home/usamimira/PHY-LLM/CC_Integrater/textbook/models/bge-m3` (BGE-M3, 1024-dim, multilingual)
-- **Weaviate data**: `/home/usamimira/PHY-LLM/CC_Integrater/textbook/weaviate_data`
-- **RAG scripts**: `/home/usamimira/PHY-LLM/CC_Integrater/textbook/rag_build/`
+- **Model**: `BAAI/bge-m3` from Hugging Face by default (1024-dim, multilingual)
+- **Weaviate data**: `textbook/weaviate_data`
+- **RAG scripts**: `textbook/rag_build/`
   - `embed_bge.py` — Generate embeddings and store in Weaviate
   - `query_rag.py` — Query the physics textbook knowledge base
-- **Merged chunks**: `/home/usamimira/PHY-LLM/CC_Integrater/textbook/merged/chunks_translated.json` (1139 chunks)
+- **Rebuild input**: set `RAG_CHUNKS_FILE` to a local `chunks_final.json` (not shipped)
 
 ## Environment Variables
 
-When running RAG scripts, set these (or `run.py` sets them automatically):
+These variables are optional; `run.py` supplies portable defaults:
 ```bash
-export RAG_MODEL_DIR=/home/usamimira/PHY-LLM/CC_Integrater/textbook/models/bge-m3
-export RAG_DATA_DIR=/home/usamimira/PHY-LLM/CC_Integrater/textbook/weaviate_data
+export RAG_MODEL_DIR=/path/to/local/bge-m3
+export RAG_DATA_DIR=/path/to/weaviate_data
+export RAG_CHUNKS_FILE=/path/to/chunks_final.json
 ```
 
 For HuggingFace downloads (user in China):
@@ -85,8 +78,8 @@ All physics formulas must use LaTeX inline math (`$...$`), not Unicode symbols:
 
 ## Common Pitfalls
 
-1. **Virtual environment path**: Always use absolute path `/home/usamimira/PHY-LLM/CC_Integrater/textbook/rag_env/bin/activate`
-2. **Working directory**: RAG scripts expect to run from `textbook/` directory
+1. **Dependencies**: create a local virtual environment and install `requirements.txt`
+2. **Rebuild data**: `chunks_final.json` is intentionally not shipped; set `RAG_CHUNKS_FILE`
 3. **BGEM3FlagModel parameter**: `devices=` not `device=`
 4. **Template variables**: Use `.replace()` not `.format()` to preserve runtime placeholders like `{workspace}`
-5. **HuggingFace downloads**: Must set `HF_ENDPOINT` and `HF_HUB_DISABLE_XET=1` for China mirror
+5. **HuggingFace downloads**: users in China can set `HF_ENDPOINT` and `HF_HUB_DISABLE_XET=1`
